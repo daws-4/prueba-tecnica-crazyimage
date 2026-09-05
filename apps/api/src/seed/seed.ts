@@ -60,6 +60,20 @@ async function main(): Promise<void> {
   const ingestion = app.get(IngestionService);
   const mongo = app.get(MongoService);
 
+  // Sembrar no pisa datos existentes salvo que se pida expresamente.
+  //
+  // Esto es lo que permite que `docker compose up` sea de verdad UN comando: el
+  // sembrado corre al levantar, llena la base la primera vez y se aparta las
+  // siguientes. Si se ejecutara siempre, reiniciar el entorno borraria lo que
+  // alguien estuviera probando.
+  const forzar = process.argv.includes('--force');
+  const yaHayDatos = (await mongo.shipments.estimatedDocumentCount()) > 0;
+  if (yaHayDatos && !forzar) {
+    report('La base ya tiene datos: no se siembra. Usa --force para reemplazarlos.');
+    await app.close();
+    return;
+  }
+
   // Sembrar es reemplazar: si no, ejecutarlo dos veces daria numeros de
   // duplicados que despistan mas de lo que ensenan.
   await Promise.all([

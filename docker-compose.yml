@@ -44,5 +44,42 @@ services:
     ports:
       - '3001:3001'
 
+  # Servicio de un solo uso: llena la base con los tres formatos y sale.
+  #
+  # Está aquí para que `docker compose up` sea de verdad UN comando y el
+  # proyecto se vea con contenido a la primera. No pisa datos existentes: si la
+  # base ya tiene envíos, se aparta. Para reemplazarlos:
+  #   docker compose run --rm seed node apps/api/dist/seed/seed.js --force
+  seed:
+    image: proyecto-api
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: 'no'
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB: andina
+    command: ['node', 'apps/api/dist/seed/seed.js']
+
+  panel:
+    build:
+      context: .
+      dockerfile: apps/panel/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      # El panel pide los datos desde el servidor, no desde el navegador, asi que
+      # habla con el API por el nombre del servicio dentro de la red de Docker.
+      # Efecto lateral util: el navegador nunca necesita alcanzar el API, asi que
+      # no hay CORS que configurar ni direccion interna que exponer.
+      API_URL: http://api:3001
+      HOSTNAME: '0.0.0.0'
+    ports:
+      - '3000:3000'
+
 volumes:
   mongo-data:

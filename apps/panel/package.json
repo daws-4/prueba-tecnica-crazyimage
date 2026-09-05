@@ -1,0 +1,26 @@
+{
+  "name": "@andina/panel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Panel de seguimiento de envios de Andina Cargo",
+  "license": "MIT",
+  "scripts": {
+    "build": "next build",
+    "start": "next start -p 3000",
+    "dev": "next dev -p 3000",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@andina/contracts": "*",
+    "next": "^16.3.4",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.8",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.1",
+    "typescript": "^5.9.3"
+  }
+}

@@ -23,6 +23,7 @@ contexto.
 | P07 | Lo que apareció al escribir las pruebas de normalización | Notas, no decisión |
 | P08 | El estado actual se deriva, no se sobrescribe | **Cerrada — comparación atómica, verificada con datos** |
 | P09 | Notas de implementación de la persistencia | Notas, no decisión |
+| P10 | El panel: obtención de datos y refresco | **Cerrada — servidor sin caché + `router.refresh()`** |
 
 ---
 
@@ -1907,3 +1908,89 @@ de un instante demasiado próximo a ahora, de modo que el último evento de la c
 futuro. **El umbral de cordura hizo exactamente su trabajo**: detectó datos imposibles antes de
 que envenenaran el estado de ningún envío. Vale la pena contarlo porque es la mejor prueba de
 que la red sirve — la encontró antes que yo.
+
+---
+
+## P10 · El panel: estrategia de obtención de datos y refresco
+
+El enunciado no pide que el panel sea bonito —dice literalmente que la estética no puntúa— pero
+**sí exige justificar la estrategia de fetching**. Esta es.
+
+### 10.1 Lo que condiciona la decisión
+
+> Frase 08: *«Camila va a tener el panel abierto toda la jornada, tiene que estar siempre al
+> día.»*
+
+Tres hechos que salen de ahí y del resto del encargo:
+
+- **Los datos cambian a ráfagas**, tres veces al día por transportista, en momentos que no
+  controlamos. No hay un ritmo al que sincronizarse.
+- **Una respuesta guardada en caché es una respuesta que puede estar mintiendo**, y evitar
+  exactamente eso es el proyecto entero.
+- **No hay autenticación** y el panel vive dentro de la red de Andina: no hay datos por usuario
+  ni nada que personalizar.
+
+### 10.2 La decisión
+
+**Renderizado en el servidor sin caché, estado en la URL, y refresco que vuelve a pedir ese
+mismo renderizado.**
+
+| Pieza | Qué es | Por qué |
+|---|---|---|
+| Componentes de servidor con `cache: 'no-store'` | El HTML se arma en el servidor con datos frescos en cada petición | Nada que pueda quedar rancio, y el navegador no tiene que esperar a un segundo viaje para ver contenido |
+| Filtros y búsqueda en la URL | `/?parados=1`, `/envios/AC-4471` | Una vista concreta es un enlace que Camila puede pegar a un compañero o guardar, y el botón de atrás funciona. Un buscador que deja la URL quieta obliga a repetir la búsqueda cada vez |
+| `router.refresh()` cada 30 s y al volver a la pestaña | Vuelve a ejecutar el renderizado del servidor y sustituye el contenido sin recargar | **No duplica la lógica de datos**: sigue habiendo un solo sitio que habla con el API |
+| Se muestra la hora del último refresco | «Actualizado a las 14:32:10» | Un panel que se actualiza solo y no lo cuenta obliga a desconfiar de él, y desconfiar es justo lo que Camila hacía con los tres portales |
+
+**El intervalo de 30 segundos es deliberadamente tranquilo.** Los lotes entran tres veces al día:
+preguntar cada dos segundos sería gastar por gusto. El refresco al recuperar el foco es el que de
+verdad importa — Camila atiende una llamada, vuelve, y lo que ve ya está al día.
+
+### 10.3 Alternativas descartadas
+
+- **Pedir los datos desde el navegador con un cliente de datos** (SWR, React Query y similares).
+  Funciona y es lo habitual, pero abre un segundo camino para traer lo mismo: uno en el servidor
+  para el primer pintado y otro en el cliente para las actualizaciones, con dos formas de
+  romperse y dos sitios donde validar el contrato. `router.refresh()` da el mismo resultado con un
+  solo camino.
+- **Revalidación por tiempo de Next (`revalidate: N`).** Es la opción cómoda, pero guarda la
+  respuesta y la sirve rancia hasta que caduca. Aquí el dato rancio es el enemigo.
+- **Actualización en vivo por SSE o WebSocket.** Es uno de los opcionales del enunciado y sería la
+  respuesta correcta si el volumen lo pidiera. No lo pide: doce lotes al día no justifican
+  mantener una conexión abierta por usuario durante ocho horas ni la maquinaria de reconexión que
+  eso arrastra. Queda anotado como el siguiente paso natural, no como algo que falte.
+
+### 10.4 Qué se sacrifica
+
+Cada refresco es una petición completa al servidor y un renderizado entero, no una actualización
+incremental de lo que cambió. Con una pantalla y treinta segundos es irrelevante; con veinte
+usuarios y un intervalo agresivo dejaría de serlo. Y hay una ventana de hasta treinta segundos en
+la que la pantalla puede estar desactualizada — aceptable cuando la fuente cambia tres veces al
+día, inaceptable si algún día la ingesta pasara a ser continua.
+
+### 10.5 Lo que el panel enseña a propósito
+
+Tres cosas que, sin señalarlas, parecerían fallos de la aplicación:
+
+1. **El evento que decide el estado actual va marcado**, y también **el último aviso recibido**.
+   Cuando son distintos —y lo son en cuanto entra un lote atrasado— la trampa de la frase 05 se ve
+   de un vistazo: el último aviso dice «en reparto», el envío está «entregado», y eso es correcto.
+   Sobre el envío `AC-4471` sale además un aviso explicándolo con palabras.
+2. **Dos transportistas informando del mismo minuto salen como dos líneas agrupadas, no como
+   una.** Con una nota diciendo por qué no se fusionan.
+3. **RutaSur aparece marcado como «informa al minuto»**, que es lo que explica por qué empata con
+   otros eventos.
+
+### 10.6 Y una consecuencia de red que no estaba buscada
+
+Como todo el trato con el API ocurre en el servidor, **el navegador nunca necesita alcanzar el
+API**. No hay CORS que configurar en producción, no se expone la dirección interna del API, y el
+panel funciona igual si el API vive en una red que el navegador de Camila no ve. En Docker esto
+se traduce en que el panel habla con `http://api:3001`, un nombre que solo existe dentro de la red
+de contenedores.
+
+### 10.7 Efecto sobre los puntos abiertos
+
+- Cierra el requisito D del alcance (estrategia de fetching justificada).
+- Cierra el punto abierto 8 en la práctica: **no se ataca el opcional de actualización en vivo**,
+  y se explica por qué en vez de dejarlo sin mencionar.

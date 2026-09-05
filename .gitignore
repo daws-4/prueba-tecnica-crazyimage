@@ -17,3 +17,7 @@ Thumbs.db
 
 .vscode/
 .idea/
+
+# Next.js
+next-env.d.ts
+.next/dev/

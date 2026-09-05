@@ -1,0 +1,253 @@
+/*
+ * CSS sobrio y a mano. El enunciado dice que la estetica no puntua y que "un CSS
+ * sobrio es la respuesta correcta"; meter un framework aqui seria anadir una
+ * dependencia y un vocabulario mas a un equipo de dos personas a cambio de nada.
+ *
+ * Una sola cosa se cuida de verdad: que se distingan de un vistazo los cinco
+ * estados y los envios parados, porque eso es lo que Camila mira todo el dia.
+ */
+
+:root {
+  --fondo: #f7f7f6;
+  --panel: #ffffff;
+  --borde: #e0e0dd;
+  --texto: #1c1c1a;
+  --suave: #6b6b66;
+  --acento: #2b4c7e;
+
+  --recogido: #6b6b66;
+  --en-transito: #2b4c7e;
+  --en-reparto: #8a5a00;
+  --incidencia: #a02020;
+  --entregado: #2c6e3f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+main {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 4rem;
+}
+
+a {
+  color: var(--acento);
+}
+
+h1 {
+  font-size: 1.35rem;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1rem;
+  margin: 2rem 0 0.75rem;
+  color: var(--suave);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+header.app {
+  border-bottom: 1px solid var(--borde);
+  background: var(--panel);
+}
+
+header.app .inner {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 1rem 1.25rem;
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+header.app .sub {
+  color: var(--suave);
+  font-size: 0.85rem;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 6px;
+  padding: 1rem 1.1rem;
+}
+
+/* --- buscador y filtros --- */
+
+form.search {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+input[type='search'],
+input[type='text'] {
+  flex: 1;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--borde);
+  border-radius: 5px;
+  font: inherit;
+  background: var(--panel);
+}
+
+button {
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--acento);
+  background: var(--acento);
+  color: #fff;
+  border-radius: 5px;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.secundario {
+  background: var(--panel);
+  color: var(--texto);
+  border-color: var(--borde);
+}
+
+.filtros {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin: 0.75rem 0 1.25rem;
+}
+
+.filtros a {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--borde);
+  border-radius: 999px;
+  background: var(--panel);
+  text-decoration: none;
+  color: var(--suave);
+  font-size: 0.85rem;
+}
+
+.filtros a[data-activo='true'] {
+  border-color: var(--acento);
+  color: var(--acento);
+  font-weight: 600;
+}
+
+/* --- tabla --- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--borde);
+  font-size: 0.9rem;
+}
+
+th {
+  color: var(--suave);
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* --- estados --- */
+
+.estado {
+  display: inline-block;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.estado[data-estado='recogido'] { background: var(--recogido); }
+.estado[data-estado='en_transito'] { background: var(--en-transito); }
+.estado[data-estado='en_reparto'] { background: var(--en-reparto); }
+.estado[data-estado='incidencia'] { background: var(--incidencia); }
+.estado[data-estado='entregado'] { background: var(--entregado); }
+
+/* --- linea de tiempo --- */
+
+ol.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-left: 2px solid var(--borde);
+}
+
+ol.timeline li {
+  position: relative;
+  padding: 0.7rem 0 0.7rem 1.25rem;
+}
+
+ol.timeline li::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 1.05rem;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--borde);
+}
+
+ol.timeline li[data-decide='true']::before {
+  background: var(--acento);
+  box-shadow: 0 0 0 3px rgba(43, 76, 126, 0.18);
+}
+
+ol.timeline li[data-decide='true'] {
+  background: rgba(43, 76, 126, 0.045);
+  border-radius: 0 5px 5px 0;
+}
+
+.meta {
+  color: var(--suave);
+  font-size: 0.82rem;
+}
+
+.nota {
+  color: var(--suave);
+  font-size: 0.82rem;
+  border-left: 3px solid var(--borde);
+  padding: 0.3rem 0 0.3rem 0.7rem;
+  margin: 0.75rem 0;
+}
+
+code {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 0.85em;
+  background: #efefec;
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+}
+
+.vacio {
+  padding: 2rem;
+  text-align: center;
+  color: var(--suave);
+}
