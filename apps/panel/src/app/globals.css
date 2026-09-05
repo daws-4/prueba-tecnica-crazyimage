@@ -251,3 +251,28 @@ code {
   text-align: center;
   color: var(--suave);
 }
+
+/* --- indicador de conexión en vivo --- */
+
+.conexion {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.conexion .punto {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--suave);
+}
+
+.conexion[data-estado='en-vivo'] .punto {
+  background: var(--entregado);
+  box-shadow: 0 0 0 3px rgba(44, 110, 63, 0.16);
+}
+
+.conexion[data-estado='reconectando'] .punto {
+  background: var(--en-reparto);
+}

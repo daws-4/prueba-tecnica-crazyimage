@@ -23,7 +23,7 @@ contexto.
 | P07 | Lo que apareció al escribir las pruebas de normalización | Notas, no decisión |
 | P08 | El estado actual se deriva, no se sobrescribe | **Cerrada — comparación atómica, verificada con datos** |
 | P09 | Notas de implementación de la persistencia | Notas, no decisión |
-| P10 | El panel: obtención de datos y refresco | **Cerrada — servidor sin caché + `router.refresh()`** |
+| P10 | El panel: obtención de datos y actualización en vivo | **Cerrada — SSE que dispara el renderizado del servidor** |
 
 ---
 
@@ -1910,87 +1910,121 @@ que envenenaran el estado de ningún envío. Vale la pena contarlo porque es la 
 que la red sirve — la encontró antes que yo.
 
 ---
-
-## P10 · El panel: estrategia de obtención de datos y refresco
+## P10 · El panel: obtención de datos y actualización en vivo
 
 El enunciado no pide que el panel sea bonito —dice literalmente que la estética no puntúa— pero
 **sí exige justificar la estrategia de fetching**. Esta es.
+
+> **Nota de honestidad: esta decisión se revisó.** La primera versión resolvió el refresco con un
+> temporizador cada 30 segundos y descartó SSE por sobredimensionado. Al probarlo se vio que el
+> argumento del descarte era flojo: dejaba una ventana de hasta medio minuto en la que la pantalla
+> podía estar mintiendo, que es exactamente lo que este proyecto existe para cerrar. El coste real
+> de SSE resultó ser menor de lo estimado —unas cincuenta líneas— porque el aviso no lleva datos.
+> Se deja escrito el cambio de rumbo en vez de reescribir la historia: **el argumento que se cayó
+> enseña más que el que quedó.**
 
 ### 10.1 Lo que condiciona la decisión
 
 > Frase 08: *«Camila va a tener el panel abierto toda la jornada, tiene que estar siempre al
 > día.»*
 
-Tres hechos que salen de ahí y del resto del encargo:
-
 - **Los datos cambian a ráfagas**, tres veces al día por transportista, en momentos que no
-  controlamos. No hay un ritmo al que sincronizarse.
+  controlamos. No hay un ritmo al que sincronizarse, y por eso ningún intervalo es el correcto.
 - **Una respuesta guardada en caché es una respuesta que puede estar mintiendo**, y evitar
   exactamente eso es el proyecto entero.
-- **No hay autenticación** y el panel vive dentro de la red de Andina: no hay datos por usuario
-  ni nada que personalizar.
+- **No hay autenticación** y el panel vive dentro de la red de Andina: no hay datos por usuario ni
+  nada que personalizar.
 
 ### 10.2 La decisión
 
-**Renderizado en el servidor sin caché, estado en la URL, y refresco que vuelve a pedir ese
-mismo renderizado.**
+**Renderizado en el servidor sin caché, estado en la URL, y un flujo de avisos en vivo (SSE) que
+dispara ese mismo renderizado.**
 
 | Pieza | Qué es | Por qué |
 |---|---|---|
-| Componentes de servidor con `cache: 'no-store'` | El HTML se arma en el servidor con datos frescos en cada petición | Nada que pueda quedar rancio, y el navegador no tiene que esperar a un segundo viaje para ver contenido |
-| Filtros y búsqueda en la URL | `/?parados=1`, `/envios/AC-4471` | Una vista concreta es un enlace que Camila puede pegar a un compañero o guardar, y el botón de atrás funciona. Un buscador que deja la URL quieta obliga a repetir la búsqueda cada vez |
-| `router.refresh()` cada 30 s y al volver a la pestaña | Vuelve a ejecutar el renderizado del servidor y sustituye el contenido sin recargar | **No duplica la lógica de datos**: sigue habiendo un solo sitio que habla con el API |
-| Se muestra la hora del último refresco | «Actualizado a las 14:32:10» | Un panel que se actualiza solo y no lo cuenta obliga a desconfiar de él, y desconfiar es justo lo que Camila hacía con los tres portales |
+| Componentes de servidor sin caché | El HTML se arma en el servidor con datos frescos en cada petición | Nada que pueda quedar rancio, y el navegador ve contenido sin esperar a un segundo viaje |
+| Filtros y búsqueda en la URL | `/?parados=1`, `/envios/AC-4471` | Una vista concreta es un enlace que Camila puede pegar a un compañero o guardar, y el botón de atrás funciona |
+| SSE en `GET /stream` | El API avisa en el momento en que termina de escribir un lote | La ventana de desfase pasa de treinta segundos a lo que tarde la red |
+| El aviso dispara un refresco del renderizado | Vuelve a ejecutar el renderizado del servidor | **No duplica la lógica de datos**: sigue habiendo un solo sitio que habla con el API |
+| Indicador «En vivo / Reconectando» | Punto de color en la cabecera | Un panel que se actualiza solo y no lo cuenta obliga a desconfiar de él, y desconfiar es lo que Camila hacía con los tres portales |
 
-**El intervalo de 30 segundos es deliberadamente tranquilo.** Los lotes entran tres veces al día:
-preguntar cada dos segundos sería gastar por gusto. El refresco al recuperar el foco es el que de
-verdad importa — Camila atiende una llamada, vuelve, y lo que ve ya está al día.
+**La pieza que hace que esto no sea complejidad gratis: el flujo lleva un aviso, no los datos.**
 
-### 10.3 Alternativas descartadas
+Un mensaje no dice «aquí tienes el evento nuevo», dice «acaba de entrar un lote». Consecuencias:
 
-- **Pedir los datos desde el navegador con un cliente de datos** (SWR, React Query y similares).
-  Funciona y es lo habitual, pero abre un segundo camino para traer lo mismo: uno en el servidor
-  para el primer pintado y otro en el cliente para las actualizaciones, con dos formas de
-  romperse y dos sitios donde validar el contrato. `router.refresh()` da el mismo resultado con un
-  solo camino.
-- **Revalidación por tiempo de Next (`revalidate: N`).** Es la opción cómoda, pero guarda la
-  respuesta y la sirve rancia hasta que caduca. Aquí el dato rancio es el enemigo.
-- **Actualización en vivo por SSE o WebSocket.** Es uno de los opcionales del enunciado y sería la
-  respuesta correcta si el volumen lo pidiera. No lo pide: doce lotes al día no justifican
-  mantener una conexión abierta por usuario durante ocho horas ni la maquinaria de reconexión que
-  eso arrastra. Queda anotado como el siguiente paso natural, no como algo que falte.
+- **SSE sustituyó al temporizador, no a la capa de datos.** Si mañana se apaga el flujo, el panel
+  sigue funcionando igual, solo que se entera más tarde. Es una mejora aditiva, no un cimiento.
+- **No hay dos caminos para que un dato llegue a la pantalla.** Si el flujo transportara eventos,
+  habría el renderizado y el flujo, dos formas de contradecirse y dos sitios donde validar el
+  contrato.
+- **El mensaje es diminuto y constante**, venga el lote con diez eventos o con cinco mil.
 
-### 10.4 Qué se sacrifica
+### 10.3 Las tres piezas que lo hacen aguantar fuera del laboratorio
 
-Cada refresco es una petición completa al servidor y un renderizado entero, no una actualización
-incremental de lo que cambió. Con una pantalla y treinta segundos es irrelevante; con veinte
-usuarios y un intervalo agresivo dejaría de serlo. Y hay una ventana de hasta treinta segundos en
-la que la pantalla puede estar desactualizada — aceptable cuando la fuente cambia tres veces al
-día, inaceptable si algún día la ingesta pasara a ser continua.
+Un SSE de demostración son diez líneas; uno que sobreviva a una jornada de ocho horas necesita
+tres cosas más, y son las que separan el ejercicio del trabajo:
 
-### 10.5 Lo que el panel enseña a propósito
+1. **El navegador reconecta solo** cuando la conexión se corta limpiamente. Eso lo da `EventSource`
+   gratis, y es la mitad de la razón de elegir SSE sobre WebSocket.
+2. **El servidor late cada veinte segundos.** Sin latido, una conexión que se ha quedado medio
+   abierta —viva para el navegador, muerta de verdad, cortada por un proxy sin avisar— parece sana
+   y el panel se queda mudo para siempre.
+3. **Una vigilancia en el cliente refresca igualmente si no llega nada en tres latidos.** Es la red
+   de seguridad: prefiero una petición de más cada minuto que una pantalla muda toda la tarde. El
+   polling no desapareció: quedó degradado a plan B.
+
+Y una pieza de arquitectura: **el flujo pasa por un puente en el propio panel** (`/api/stream`), no
+directo del navegador al API. Eso conserva una propiedad que costó poco y vale mucho —el navegador
+nunca habla con el API— así que no hay CORS que configurar, no se expone la dirección interna y el
+panel funciona aunque el API viva en una red que el navegador de Camila no ve. En Docker el API
+responde en `http://api:3001`, un nombre que solo existe dentro de la red de contenedores.
+
+### 10.4 Alternativas descartadas
+
+- **Solo temporizador (la primera versión).** Funciona y es más simple, pero deja una ventana de
+  hasta treinta segundos de desfase. Sobrevive como plan B dentro de la vigilancia.
+- **WebSocket.** El tráfico va en una sola dirección: el servidor avisa y el panel escucha, y el
+  panel nunca necesita mandar nada por ahí. Un WebSocket daría una vía de vuelta que no se usa a
+  cambio de otro protocolo, otra librería y su propia reconexión. SSE es HTTP de toda la vida.
+- **Pedir los datos desde el navegador con un cliente de datos** (SWR, React Query). Abriría el
+  segundo camino que se acaba de argumentar evitar.
+- **Revalidación por tiempo del framework.** Guarda la respuesta y la sirve rancia hasta que
+  caduca. Aquí el dato rancio es el enemigo.
+
+### 10.5 Qué se sacrifica
+
+**El canal de avisos vive dentro de un proceso.** Con dos instancias del API detrás de un
+balanceador, un panel conectado a la instancia A no oiría los lotes que entran por la B — y lo
+disimularía, porque la vigilancia acabaría refrescando de todos modos y nadie notaría que el «en
+vivo» dejó de serlo. Es el límite real de esta implementación y hay que decirlo en voz alta.
+
+Además, cada aviso provoca un renderizado completo en todos los paneles abiertos, no una
+actualización incremental de lo que cambió. Con doce lotes al día y una pantalla es irrelevante;
+con ingesta continua dejaría de serlo.
+
+### 10.6 Qué haría con una semana más
+
+Cambiar el emisor en memoria por **los flujos de cambios de Mongo** (*change streams*). Dos
+ventajas de golpe: funciona con varias instancias del API sin añadir Redis, y **desacopla el aviso
+de la ingesta** — cualquier escritura sobre los envíos avisaría, viniera de donde viniera, incluido
+un reproceso manual o una corrección hecha a mano. El precio es que exige un conjunto de réplica, y
+el `docker compose` de esta entrega levanta un Mongo suelto.
+
+### 10.7 Lo que el panel enseña a propósito
 
 Tres cosas que, sin señalarlas, parecerían fallos de la aplicación:
 
 1. **El evento que decide el estado actual va marcado**, y también **el último aviso recibido**.
    Cuando son distintos —y lo son en cuanto entra un lote atrasado— la trampa de la frase 05 se ve
-   de un vistazo: el último aviso dice «en reparto», el envío está «entregado», y eso es correcto.
-   Sobre el envío `AC-4471` sale además un aviso explicándolo con palabras.
-2. **Dos transportistas informando del mismo minuto salen como dos líneas agrupadas, no como
-   una.** Con una nota diciendo por qué no se fusionan.
-3. **RutaSur aparece marcado como «informa al minuto»**, que es lo que explica por qué empata con
-   otros eventos.
+   de un vistazo. Sobre `AC-4471` sale además un aviso explicándolo con palabras.
+2. **Dos transportistas informando del mismo minuto salen como dos líneas agrupadas**, con una nota
+   diciendo por qué no se fusionan.
+3. **RutaSur aparece marcado como «informa al minuto»**, que es lo que explica sus empates.
 
-### 10.6 Y una consecuencia de red que no estaba buscada
-
-Como todo el trato con el API ocurre en el servidor, **el navegador nunca necesita alcanzar el
-API**. No hay CORS que configurar en producción, no se expone la dirección interna del API, y el
-panel funciona igual si el API vive en una red que el navegador de Camila no ve. En Docker esto
-se traduce en que el panel habla con `http://api:3001`, un nombre que solo existe dentro de la red
-de contenedores.
-
-### 10.7 Efecto sobre los puntos abiertos
+### 10.8 Efecto sobre los puntos abiertos
 
 - Cierra el requisito D del alcance (estrategia de fetching justificada).
-- Cierra el punto abierto 8 en la práctica: **no se ataca el opcional de actualización en vivo**,
-  y se explica por qué en vez de dejarlo sin mencionar.
+- **Cierra el punto abierto 8: el opcional que se reclama es «actualización en vivo del panel».**
+  Es el único de los cinco que se ha construido a propósito; el «contrato verificable» y las
+  «pruebas de la normalización» cayeron como efecto lateral de otras decisiones y se mencionan, no
+  se reclaman.

@@ -22,3 +22,4 @@ export * from './event';
 export * from './shipment';
 export * from './query';
 export * from './ingest';
+export * from './stream';

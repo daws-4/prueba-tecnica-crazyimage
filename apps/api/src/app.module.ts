@@ -5,6 +5,8 @@ import { IngestionController } from './ingestion/ingestion.controller';
 import { IngestionService } from './ingestion/ingestion.service';
 import { EventsRepository } from './ingestion/events.repository';
 import { ShipmentsProjection } from './ingestion/shipments.projection';
+import { IngestionEvents } from './ingestion/ingestion-events.service';
+import { StreamController } from './ingestion/stream.controller';
 import { MongoService } from './mongo/mongo.service';
 import { ShipmentsController } from './shipments/shipments.controller';
 import { ShipmentsService } from './shipments/shipments.service';
@@ -18,12 +20,13 @@ import { ShipmentsService } from './shipments/shipments.service';
  * transportista (`carriers/`) y lo que no sabe de ninguno (todo lo demas).
  */
 @Module({
-  controllers: [IngestionController, ShipmentsController],
+  controllers: [IngestionController, StreamController, ShipmentsController],
   providers: [
     { provide: ENV, useFactory: () => loadEnv() },
     MongoService,
     EventsRepository,
     ShipmentsProjection,
+    IngestionEvents,
     IngestionService,
     ShipmentsService,
   ],

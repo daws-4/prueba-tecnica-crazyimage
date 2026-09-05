@@ -66,6 +66,25 @@ Después, en el listado, prueba el filtro **«Parados más de 48 h»**: los env�
 demasiado tiempo quietos sin llegar a entregado. Los otros filtros dicen en qué punto está cada
 envío; ese dice cuáles van a generar una llamada.
 
+### Verlo actualizarse en vivo
+
+Deja el panel abierto en <http://localhost:3000> —arriba a la derecha pone **«En vivo»** con un
+punto verde— y desde otra terminal manda un lote:
+
+```bash
+curl -X POST http://localhost:3001/ingest/andes-express \
+  -H 'Content-Type: application/json' \
+  -d '[{"guia":"AC-4471","evento":"INCIDENCIA","ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","ciudad":"Cúcuta"}]'
+```
+
+La pantalla se actualiza sola, sin recargar. El API abre un flujo de avisos (SSE) y el panel
+escucha; cuando entra un lote, el aviso llega en el momento.
+
+**El aviso no lleva datos, solo dice que algo cambió.** El panel reacciona volviendo a pedir el
+renderizado del servidor, que es el único sitio que habla con el API. Así el flujo sustituye al
+temporizador y no a la capa de datos: si se cae, el panel sigue funcionando igual, solo que se
+entera más tarde —hay una vigilancia que refresca si dejan de llegar latidos.
+
 ### Probar la ingesta a mano
 
 ```bash
@@ -102,6 +121,7 @@ curl -X POST http://localhost:3001/ingest/rutasur \
 | `POST` | `/ingest/:carrierId` | Recibe un lote de un transportista y devuelve el informe: cuántos entraron, cuántos eran reenvíos, cuántos quedaron en cuarentena y por qué |
 | `GET` | `/shipments` | Listado paginado por cursor. Filtros: `status`, `carrierId`, `stalledForHours` |
 | `GET` | `/shipments/:trackingNumber` | Estado actual y línea de tiempo ordenada |
+| `GET` | `/stream` | Flujo de avisos en vivo (SSE). Emite cuando termina de entrar un lote, y late cada 20 s |
 
 Transportistas con adaptador: `andes-express`, `transbolivar`, `rutasur`.
 

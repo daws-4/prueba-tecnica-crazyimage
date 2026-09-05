@@ -1,7 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { HEARTBEAT_INTERVAL_MS, ingestionSignalSchema } from '@andina/contracts';
 
 /**
  * Mantiene la pantalla al dia sin recargarla.
@@ -9,50 +10,108 @@ import { useEffect, useState } from 'react';
  * Frase 08 del cliente: *"Camila va a tener el panel abierto toda la jornada,
  * tiene que estar siempre al dia"*.
  *
- * La pieza clave es `router.refresh()`: vuelve a ejecutar el renderizado en el
- * servidor y sustituye el contenido sin perder el estado del navegador —el
- * cursor sigue en el buscador, la pagina no salta—. Y sobre todo, **no duplica
- * la logica de datos**: sigue habiendo un solo sitio que habla con el API, el
- * del servidor. Si esto se hubiera resuelto pidiendo los datos desde el
- * navegador, habria dos caminos distintos para traer lo mismo y dos formas de
- * que se rompan.
+ * El API abre un flujo de avisos (SSE) y esto escucha. Cuando entra un lote, el
+ * aviso llega en el momento y la pantalla se rehace. Antes esto era un
+ * temporizador cada treinta segundos; el temporizador funcionaba, pero dejaba
+ * una ventana en la que la pantalla podia estar mintiendo, y esa ventana es
+ * justo lo que este proyecto existe para cerrar.
  *
- * El intervalo es deliberadamente tranquilo: los lotes entran tres veces al dia,
- * asi que preguntar cada pocos segundos seria gastar por gusto. Se refresca
- * ademas al volver a la pestana, que es cuando de verdad importa: Camila atiende
- * una llamada, vuelve, y lo que ve ya esta actualizado.
+ * **Lo que NO cambio al meter SSE, y es lo importante:** el aviso no trae datos.
+ * Dice "acaba de entrar un lote" y esto llama a `router.refresh()`, que vuelve a
+ * ejecutar el renderizado del servidor — el mismo camino de siempre, el unico
+ * que habla con el API. SSE sustituyo al temporizador, no a la capa de datos. Si
+ * el flujo se cae, el panel sigue funcionando exactamente igual, solo que se
+ * entera mas tarde.
+ *
+ * Tres cosas que hacen que esto aguante fuera del laboratorio:
+ *
+ * 1. `EventSource` reconecta solo cuando la conexion se corta de forma limpia.
+ * 2. El servidor late cada veinte segundos, asi que una conexion que se ha
+ *    quedado medio abierta —viva para el navegador, muerta de verdad— se puede
+ *    detectar: dejan de llegar latidos.
+ * 3. Una vigilancia refresca igualmente si no llega nada en el plazo de tres
+ *    latidos. Es la red de seguridad: prefiero una peticion de mas cada minuto
+ *    que una pantalla muda toda la tarde.
  */
 
-const INTERVALO_MS = 30_000;
+/** Tres latidos sin noticias y damos por sorda la conexion. */
+const VIGILANCIA_MS = HEARTBEAT_INTERVAL_MS * 3;
+
+type Estado = 'conectando' | 'en-vivo' | 'reconectando';
 
 const horaCorta = (instante: Date): string =>
   instante.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 export function AutoRefresh(): React.JSX.Element {
   const router = useRouter();
-  const [ultima, setUltima] = useState<Date | null>(null);
+  const [estado, setEstado] = useState<Estado>('conectando');
+  const [ultimoLote, setUltimoLote] = useState<Date | null>(null);
+  const ultimaSenal = useRef<number>(Date.now());
 
   useEffect(() => {
-    const refrescar = (): void => {
-      router.refresh();
-      setUltima(new Date());
+    const source = new EventSource('/api/stream');
+
+    source.onopen = (): void => {
+      setEstado('en-vivo');
+      ultimaSenal.current = Date.now();
     };
 
-    const temporizador = setInterval(refrescar, INTERVALO_MS);
-    window.addEventListener('focus', refrescar);
+    source.onmessage = (evento: MessageEvent<string>): void => {
+      ultimaSenal.current = Date.now();
+      setEstado('en-vivo');
+
+      // El mensaje se valida contra el mismo contrato que usa el API para
+      // emitirlo. Un aviso con otra forma se ignora en vez de romper la
+      // pantalla: es el tercer sitio donde el contrato se comprueba en
+      // ejecucion, despues del borde del API y de la respuesta de consulta.
+      const parsed = ingestionSignalSchema.safeParse(JSON.parse(evento.data));
+      if (!parsed.success) return;
+
+      // El latido solo sirve para saber que seguimos vivos: no hay nada nuevo
+      // que mirar, asi que no se molesta al servidor.
+      if (parsed.data.kind === 'heartbeat') return;
+
+      router.refresh();
+      setUltimoLote(new Date());
+    };
+
+    source.onerror = (): void => {
+      // EventSource reintenta solo; aqui solo se refleja en pantalla, porque un
+      // panel que se ha quedado sordo y no lo dice es peor que uno lento.
+      setEstado('reconectando');
+    };
+
+    // La vigilancia: si el flujo se queda mudo, se refresca igual.
+    const vigilancia = setInterval(() => {
+      if (Date.now() - ultimaSenal.current < VIGILANCIA_MS) return;
+      setEstado('reconectando');
+      router.refresh();
+      setUltimoLote(new Date());
+      ultimaSenal.current = Date.now();
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // Al volver a la pestana se refresca sin esperar. Camila atiende una
+    // llamada, vuelve, y lo que ve ya esta al dia.
+    const alVolver = (): void => {
+      if (document.visibilityState === 'visible') router.refresh();
+    };
+    document.addEventListener('visibilitychange', alVolver);
 
     return () => {
-      clearInterval(temporizador);
-      window.removeEventListener('focus', refrescar);
+      clearInterval(vigilancia);
+      document.removeEventListener('visibilitychange', alVolver);
+      source.close();
     };
   }, [router]);
 
+  const etiqueta =
+    estado === 'en-vivo' ? 'En vivo' : estado === 'conectando' ? 'Conectando…' : 'Reconectando…';
+
   return (
-    <span className="meta">
-      {/* Se dice cuando fue la ultima vez. Un panel que se actualiza solo y no lo
-          cuenta obliga a desconfiar de el, y desconfiar es justo lo que Camila
-          hacia con los tres portales. */}
-      {ultima === null ? 'Se actualiza solo cada 30 s' : `Actualizado a las ${horaCorta(ultima)}`}
+    <span className="meta conexion" data-estado={estado}>
+      <span className="punto" aria-hidden="true" />
+      {etiqueta}
+      {ultimoLote !== null ? ` · último lote a las ${horaCorta(ultimoLote)}` : ''}
     </span>
   );
 }

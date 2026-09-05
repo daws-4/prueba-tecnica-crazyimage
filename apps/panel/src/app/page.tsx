@@ -134,11 +134,6 @@ export default async function Page({
         </p>
       ) : null}
 
-      <p className="nota">
-        La paginación va por cursor y no por número de página: con dos millones de eventos, saltarse
-        cincuenta mil filas cuesta cada vez más, y un lote que entra entre dos peticiones descolocaría
-        las páginas.
-      </p>
     </>
   );
 }

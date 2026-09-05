@@ -9,6 +9,7 @@ import type { QuarantineDocument } from '../mongo/documents';
 import { MongoService } from '../mongo/mongo.service';
 import { normalizeEvent } from '../normalization/normalizer';
 import { EventsRepository, type IncomingEvent } from './events.repository';
+import { IngestionEvents } from './ingestion-events.service';
 import { ShipmentsProjection } from './shipments.projection';
 
 @Injectable()
@@ -20,6 +21,7 @@ export class IngestionService {
     private readonly mongo: MongoService,
     private readonly events: EventsRepository,
     private readonly projection: ShipmentsProjection,
+    private readonly signals: IngestionEvents,
   ) {}
 
   /**
@@ -106,6 +108,19 @@ export class IngestionService {
       `Lote ${batchId} de ${carrierId}: ${report.received} recibidos, ${report.accepted} nuevos, ` +
         `${report.duplicates} reenvios, ${report.quarantined} en cuarentena`,
     );
+
+    // Se avisa DESPUES de que todo este escrito y consultable. Al reves, un
+    // panel podria pedir los datos antes de que existan y quedarse ensenando lo
+    // de antes hasta el siguiente aviso.
+    this.signals.publish({
+      kind: 'batch-ingested',
+      batchId,
+      carrierId,
+      at: receivedAt.toISOString(),
+      accepted: report.accepted,
+      duplicates: report.duplicates,
+      quarantined: report.quarantined,
+    });
 
     return report;
   }
