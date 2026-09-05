@@ -21,6 +21,8 @@ contexto.
 | P05 | Espacio de trabajo y entorno de ejecución | **Cerrada — npm workspaces + compose de dos servicios** |
 | P06 | Semántica del endpoint de ingesta | **Cerrada — síncrono, 200 con informe** |
 | P07 | Lo que apareció al escribir las pruebas de normalización | Notas, no decisión |
+| P08 | El estado actual se deriva, no se sobrescribe | **Cerrada — comparación atómica, verificada con datos** |
+| P09 | Notas de implementación de la persistencia | Notas, no decisión |
 
 ---
 
@@ -1727,3 +1729,181 @@ dato externo**, y el compilador obliga a aportarlo. Si el tipo hubiera sido `Dat
 `10:22` se habría convertido en algún punto con la zona del servidor y nadie se habría enterado
 hasta que Camila diera una respuesta equivocada. Es la aplicación concreta de §1.4: *el fallo
 peligroso no es el que falla, es el que funciona y miente*.
+
+---
+
+## P08 · El estado actual se deriva, no se sobrescribe
+
+### 8.1 La frase y la trampa
+
+> Frase 05: *«El estado actual lo guardan en un campo y lo actualizan cada vez que llega un
+> evento nuevo.»*
+
+Suena a descripción inocente de cómo funciona un sistema. Es la trampa más cara del enunciado,
+porque **el último en llegar no es el más reciente**. Los transportistas mandan lotes tres
+veces al día: un evento de esta mañana puede entrar por la tarde, después de uno que ocurrió
+más tarde. Si el campo se sobrescribe con cada evento que llega, un envío ya entregado vuelve a
+«en reparto» en cuanto un lote atrasado toca tierra.
+
+Y eso no es un fallo cosmético: es exactamente **la respuesta equivocada que Camila da un par
+de veces por semana** y que este proyecto existe para eliminar.
+
+### 8.2 La decisión
+
+El estado actual se guarda desnormalizado en el envío, pero **no se sobrescribe: se compara**.
+Solo lo mueve un evento que de verdad sea posterior.
+
+El orden completo, de mayor a menor peso:
+
+| # | Criterio | Por qué |
+|---|---|---|
+| 1 | `occurredAt` | Cuándo ocurrió de verdad. Es el criterio real. |
+| 2 | `receivedAt` | A igualdad de instante, gana el que llegó después: a falta de mejor información, el reporte más reciente es el conocimiento más actual. |
+| 3 | `dedupKey` | Desempate alfabético, sin significado de negocio. Está para que el resultado sea **reproducible**: dos eventos del mismo lote comparten `receivedAt`, y sin este tercer criterio el estado dependería del orden en que la base devolviera los documentos, y cambiaría de un refresco a otro. |
+
+El segundo y el tercero existen porque truncar al minuto (P03) hace que los empates existan de
+verdad. Las dos decisiones se necesitan: una hace visible el problema y la otra lo resuelve.
+
+**Cómo se ejecuta.** La comparación va dentro del filtro de la escritura, así que comparar y
+escribir son **una sola operación atómica sobre un solo documento**. Dos lotes que entren a la
+vez no pueden dejar el envío a medias ni hacerlo retroceder, y no hace falta ninguna
+transacción. Es, en concreto, la razón por la que este sistema no necesita dos motores de base
+de datos: la consistencia que importa aquí es dentro de un documento, no entre tablas.
+
+**Y se ve en pantalla.** El detalle del envío devuelve además *qué* evento decide el estado
+actual. Sin eso, un evento que llegó el último pero ocurrió antes parece un fallo de la
+aplicación en vez de la decisión deliberada que es.
+
+### 8.3 Verificado con datos, no con argumentos
+
+Los datos de ejemplo están construidos para que esto se vea. En `AC-4471`, RutaSur manda un
+«en reparto» **después** de que Andes haya reportado la entrega:
+
+```
+estado actual : entregado
+lo decide     : andes-express|AC-4471|2026-09-04T17:26:00.000Z|entregado
+transportistas: andes-express, transbolivar, rutasur
+
+  2026-09-02T18:26:00Z  recogido     Andes Express  recibido ...57.189Z
+  2026-09-03T12:26:00Z  en_transito  Andes Express  recibido ...57.189Z
+  2026-09-03T12:26:00Z  en_transito  TransBolívar   recibido ...57.200Z
+  2026-09-04T16:26:00Z  en_reparto   RutaSur        recibido ...57.211Z   <- el ultimo en llegar
+  2026-09-04T17:26:00Z  entregado    Andes Express  recibido ...57.206Z   <- el que manda
+```
+
+El último evento en llegar es `en_reparto` y el estado actual es `entregado`. Con
+«último-que-llega-gana», esa pantalla estaría mintiendo.
+
+En la misma captura se ve la otra decisión: Andes y TransBolívar reportan `en_transito` en el
+**mismo minuto** y aparecen como **dos eventos**, no uno. Son dos fuentes independientes
+coincidiendo, y eso es una confirmación, no ruido.
+
+### 8.4 Borrador para DECISIONS.md — *reescribir con palabras propias*
+
+**Situación.** El cliente describió el estado actual como un campo que se actualiza cada vez
+que llega un evento nuevo. El problema es que los transportistas mandan lotes tres veces al día
+y llegan desordenados: un evento de esta mañana puede entrar esta tarde, después de otro que
+ocurrió más tarde. Con esa descripción, un envío ya entregado vuelve a «en reparto» en cuanto
+llega un lote atrasado.
+
+**Decisión.** El estado actual sigue guardado en el envío, porque el listado lo necesita para
+poder filtrar, pero no se sobrescribe: solo lo mueve un evento que sea posterior al que ya
+está. A igualdad de instante gana el que llegó después, y si también empatan ahí se desempata
+por un criterio fijo para que el resultado sea siempre el mismo. La comparación y la escritura
+son una sola operación, así que dos lotes simultáneos no pueden dejar el envío a medias. La
+pantalla muestra además cuál es el evento que decide el estado.
+
+**Alternativas descartadas.** *Sobrescribir con cada evento, como lo describió el cliente:* es
+la fuente exacta de las respuestas equivocadas que quieren eliminar. *No guardar el estado y
+calcularlo al vuelo desde los eventos:* correcto y más simple para la pantalla de detalle, pero
+imposible para el listado — filtrar cuarenta mil envíos por su estado actual obligaría a
+recorrer todos sus eventos en cada consulta. Se guarda desnormalizado precisamente porque el
+listado existe. *Desempatar por «estado más avanzado»:* tentador y equivocado, porque
+«incidencia» no está en ninguna progresión lineal y un envío puede volver a «en tránsito»
+después de una; eso metería reglas de negocio inventadas dentro de una decisión técnica.
+
+**Qué sacrifiqué.** El estado del envío es un dato duplicado: vive en el envío y se puede
+deducir de sus eventos. Si alguien escribe en la colección de envíos por su cuenta, las dos
+versiones dejan de coincidir y la aplicación no se entera. Lo asumo porque el envío es una
+proyección reconstruible —se puede regenerar entera desde los eventos en cualquier momento—,
+pero es una duplicación real y hay que saber que está ahí. Sacrifiqué también la posibilidad de
+usar la hora de llegada como criterio principal, que habría sido más simple de explicar y es lo
+que el cliente esperaba.
+
+**Qué rompe esto a escala 100×.** No el volumen: mover el estado es una escritura sobre un
+documento identificado por su guía, y cuesta lo mismo con cuarenta envíos que con dos millones.
+Lo que crece es el número de envíos tocados por lote: hoy un lote de cinco mil eventos toca
+unos mil envíos, y eso son mil comparaciones por lote. Con cuatro transportistas informando los
+mismos envíos, la cifra sube y aparece más contención sobre los mismos documentos. La salida no
+es cambiar la regla, es agrupar por envío antes de escribir —que ya se hace— y, si algún día no
+bastara, procesar por franjas de guía en paralelo, que es posible justamente porque cada envío
+se decide solo con sus propios eventos.
+
+**Qué haría con una semana más.** Una tarea que recalcule la proyección desde cero y compare
+con lo que hay guardado, para que una divergencia se detecte sola en vez de esperar a que
+alguien la note. Es barata de escribir precisamente porque el envío es derivado: si el
+recálculo y lo guardado no coinciden, el guardado está mal, sin discusión.
+
+**La traducción para el cliente.**
+
+> Guardar el estado y actualizarlo con cada evento que llega parece lo natural, pero es
+> justamente lo que produce las respuestas equivocadas: como los transportistas mandan por
+> lotes tres veces al día, a veces nos enteramos tarde de algo que pasó antes. Si el último
+> aviso en llegar mandara siempre, un paquete ya entregado volvería a aparecer «en camino».
+> Ahora el estado lo decide el evento que ocurrió más tarde, no el que llegó el último, y en la
+> pantalla se ve cuál es.
+
+### 8.5 Efecto sobre los puntos abiertos
+
+- Cierra la última decisión pendiente de `DECISIONS.md`.
+- Deja el conjunto en seis: adaptadores, motor único, identidad del evento, contrato, ingesta
+  síncrona y estado derivado. El enunciado pide entre cuatro y seis.
+
+---
+
+## P09 · Notas de implementación de la persistencia
+
+Material de `README` y de comentarios en el código, no de `DECISIONS.md`.
+
+### 9.1 Los índices y para qué es cada uno
+
+| Colección | Índice | Para qué |
+|---|---|---|
+| `events` | `{trackingNumber, dedupKey}` **único** | Toda la idempotencia. Compuesto y con la guía primero porque un índice único solo se puede garantizar en un cluster repartido si empieza por la clave de reparto; dejarlo así hoy evita rehacerlo mañana. Las escrituras filtran por los dos campos para poder usarlo. |
+| `events` | `{trackingNumber, occurredAt: -1}` | La línea de tiempo y el evento que decide el estado, con la misma estructura. |
+| `shipments` | `{currentStatus, lastEventAt: -1}` | El listado cuando se filtra por estado. |
+| `shipments` | `{lastEventAt: -1}` | El listado de envíos parados, sin filtrar por estado. |
+| `quarantine` | `{batchId}` y `{carrierId, receivedAt: -1}` | Buscar qué pasó con un lote concreto o con un transportista. |
+
+### 9.2 Por qué dos escrituras y no una
+
+La proyección del envío se actualiza en dos pasos: primero asegurar que existe y acumular lo
+aditivo (transportistas que lo reportan, número de eventos nuevos), después mover el estado si
+el candidato gana. Van separadas porque en una escritura por lotes sin orden las operaciones
+sobre un mismo documento no tienen orden garantizado, y la segunda necesita que la primera haya
+ocurrido.
+
+Se consideró resolverlo en una sola operación con una tubería de agregación dentro de la
+actualización, que Mongo permite y que sería técnicamente más elegante. Se descartó por
+legibilidad: dos actualizaciones normales las entiende cualquiera que llegue nuevo al
+repositorio, y una tubería condicional dentro de un `update` no. El coste es un viaje más por
+lote, que con doce lotes al día es literalmente nada.
+
+### 9.3 La carrera del índice único
+
+Dos lotes con el mismo evento entrando a la vez: los dos ven que no existe y los dos intentan
+insertarlo. El índice único deja pasar a uno y el otro recibe un error de clave duplicada. **No
+es un fallo, es la deduplicación funcionando**, así que ese evento se cuenta como reenvío en
+vez de propagarse como error. Cualquier otro código de error sí se propaga.
+
+Los duplicados *dentro del mismo lote* se agrupan en memoria antes de escribir, que es más
+barato que gestionar la colisión.
+
+### 9.4 Lo que encontró el propio sistema en los datos de ejemplo
+
+Al sembrar por primera vez salieron 21 eventos en cuarentena en vez de los 5 esperados: 17 eran
+`date_out_of_bounds`. El fallo estaba en el seeder, que generaba cadenas de eventos partiendo
+de un instante demasiado próximo a ahora, de modo que el último evento de la cadena caía en el
+futuro. **El umbral de cordura hizo exactamente su trabajo**: detectó datos imposibles antes de
+que envenenaran el estado de ningún envío. Vale la pena contarlo porque es la mejor prueba de
+que la red sirve — la encontró antes que yo.

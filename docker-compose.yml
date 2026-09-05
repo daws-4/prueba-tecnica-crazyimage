@@ -1,0 +1,48 @@
+# Un solo comando para verlo funcionando: `docker compose up`.
+#
+# Dos servicios y no un contenedor con todo dentro. La idea de meter Mongo y la
+# aplicacion en la misma imagen sobre node:22 se descarto por tres motivos:
+# node:22-alpine no puede ejecutar mongod porque necesita glibc; dos procesos en
+# un contenedor exigen un supervisor, y sin el, si mongod muere el contenedor
+# sigue pareciendo sano; y el volumen hace falta igualmente, porque el requisito
+# dice que los datos sobrevivan a un reinicio. El contenedor unico no evitaba
+# ninguna pieza, solo las escondia.
+
+services:
+  mongo:
+    image: mongo:8
+    restart: unless-stopped
+    volumes:
+      # Volumen con nombre: aqui es donde los datos sobreviven a un reinicio.
+      - mongo-data:/data/db
+    ports:
+      # Expuesto para poder inspeccionar la base desde fuera durante la demo.
+      - '27017:27017'
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  api:
+    build:
+      # El contexto es la raiz del repositorio porque la imagen necesita el
+      # contrato compartido, que vive fuera de apps/api.
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        # Espera a que Mongo responda de verdad, no solo a que el contenedor
+        # exista. Sin esto, el API arranca antes y falla al crear los indices.
+        condition: service_healthy
+    environment:
+      PORT: 3001
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB: andina
+    ports:
+      - '3001:3001'
+
+volumes:
+  mongo-data:
