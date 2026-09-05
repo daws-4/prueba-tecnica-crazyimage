@@ -24,6 +24,7 @@ contexto.
 | P08 | El estado actual se deriva, no se sobrescribe | **Cerrada — comparación atómica, verificada con datos** |
 | P09 | Notas de implementación de la persistencia | Notas, no decisión |
 | P10 | El panel: obtención de datos y actualización en vivo | **Cerrada — SSE que dispara el renderizado del servidor** |
+| P11 | Cobertura de pruebas: seis escenarios cargables | **Cerrada — 1 típico + 3 límite + 2 con tres transportistas** |
 
 ---
 
@@ -2028,3 +2029,50 @@ Tres cosas que, sin señalarlas, parecerían fallos de la aplicación:
   Es el único de los cinco que se ha construido a propósito; el «contrato verificable» y las
   «pruebas de la normalización» cayeron como efecto lateral de otras decisiones y se mencionan, no
   se reclaman.
+
+---
+
+## P11 · Cobertura de pruebas: seis escenarios cargables
+
+El enunciado es explícito: *«con cuatro casos bien elegidos ya nos dices más que con cuarenta»*.
+Había ya trece pruebas unitarias sobre la normalización, pero corren en memoria: un evaluador no
+puede cargarlas ni ver su efecto. Faltaba la otra mitad.
+
+### 11.1 La decisión
+
+**Seis escenarios que se cargan de uno en uno por el mismo endpoint que usarían los
+transportistas**, cada uno con su guía propia y su frase de «qué demuestra» impresa al terminar,
+más la URL del envío en el panel.
+
+| Grupo | Escenarios | Por qué ese reparto |
+|---|---|---|
+| Típico | `tipico` | La referencia aburrida. Sin ella, los casos límite no se leen como excepciones |
+| Límite | `desorden`, `reenvio`, `fechas` | Las tres trampas del enunciado: el orden de llegada, la idempotencia y el dato imposible |
+| Tres transportistas | `tres-coinciden`, `tres-relevo` | Donde el sistema tiene que demostrar que de verdad unificó los tres formatos |
+
+**Van por HTTP, no llamando a los servicios por dentro.** Es a propósito: así se ejercita el
+camino completo —validación del borde, adaptador, normalización, escritura por lotes, proyección
+del envío y aviso en vivo— y lo que ve el evaluador es exactamente lo que vería un transportista.
+Un escenario que llamara al servicio directamente probaría menos de lo que aparenta.
+
+### 11.2 Lo que deliberadamente no hay
+
+**Ningún escenario con un cuarto transportista.** Hoy no existe adaptador para ninguno, así que un
+caso así solo demostraría que el API devuelve `404` — que ya está cubierto y no necesita un
+escenario. La extensibilidad se demuestra enseñando el registro y el adaptador, no fabricando un
+transportista de mentira. Cuando llegue en enero, su escenario se añade aquí igual que su
+adaptador.
+
+### 11.3 Resultado verificado
+
+| Guía | Estado | Eventos | Transp. | Lo que se comprueba |
+|---|---|---|---|---|
+| `AC-9101` | entregado | 4 | 1 | El que decide es también el último en llegar: todo en orden |
+| `AC-9102` | **entregado** | 3 | 2 | **Decide `entregado`/Andes, pero el último en llegar es `en_reparto`/RutaSur** |
+| `AC-9103` | en tránsito | **2** | 1 | Cuatro eventos enviados, dos guardados, marcados como reenviados |
+| `AC-9104` | recogido | **1** | 1 | Cinco enviados, uno entra, cuatro en cuarentena con cuatro motivos |
+| `AC-9105` | en tránsito | **3** | 3 | Tres eventos en el mismo minuto, sin fusionar |
+| `AC-9106` | entregado | 5 | 3 | Tres formatos y dos husos en una línea de tiempo coherente |
+
+La segunda fila es la que hay que enseñar en el vídeo: es la frase 05 del cliente, demostrada con
+datos y no con argumentos.

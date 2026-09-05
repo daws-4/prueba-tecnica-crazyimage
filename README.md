@@ -163,11 +163,54 @@ El panel no se toca: recibe los transportistas como datos, no conoce la lista.
 
 ---
 
+## Escenarios: cargar datos por caso
+
+Para no tener que fabricar payloads a mano, hay seis escenarios que cargan datos nuevos y dicen
+dónde mirar el resultado. Cada uno entra **por el mismo endpoint que usarían los transportistas**,
+así que ejercitan el camino completo: validación del borde, adaptador, normalización, escritura y
+aviso en vivo.
+
+```bash
+# Ver la lista
+docker compose exec api node apps/api/dist/scenarios/run.js
+
+# Cargar uno
+docker compose exec api node apps/api/dist/scenarios/run.js desorden
+
+# Cargar los seis
+docker compose exec api node apps/api/dist/scenarios/run.js todos
+```
+
+Con Node instalado, desde la raíz del repositorio: `npm run escenario -w @andina/api -- desorden`.
+
+| Escenario | Guía | Qué demuestra |
+|---|---|---|
+| **`tipico`** | `AC-9101` | La referencia contra la que comparar: eventos en orden, un transportista, entregado |
+| **`desorden`** | `AC-9102` | El último aviso recibido dice «en reparto» y el envío sigue **entregado**. Los dos van marcados en la línea de tiempo |
+| **`reenvio`** | `AC-9103` | El mismo lote dos veces: `0 nuevos, 2 reenvíos`. La cuenta de eventos no se mueve y el campo desconocido se ignora sin ruido |
+| **`fechas`** | `AC-9104` | Un evento bueno entra y cuatro malos van a cuarentena, cada uno con su motivo. El lote no se pierde entero por culpa de uno |
+| **`tres-coinciden`** | `AC-9105` | Los tres informan del mismo minuto y salen **tres eventos, no uno**: coincidir es una confirmación, no ruido |
+| **`tres-relevo`** | `AC-9106` | Un envío que cambia de manos y cruza la frontera: tres formatos y dos husos horarios en una sola línea de tiempo coherente |
+
+Cada ejecución imprime el informe de cada lote y termina con la URL del envío en el panel.
+
+**Por qué seis y no cuarenta.** Uno corriente que sirve de referencia, tres límite —que son las
+tres trampas del enunciado: el desorden, el reenvío y el dato imposible— y dos con los tres
+transportistas en el mismo envío, que es donde el sistema tiene que demostrar que de verdad los ha
+unificado. No hay escenarios con un cuarto transportista porque hoy no existe adaptador para
+ninguno: un caso así solo demostraría que el API devuelve `404`.
+
+Para volver al estado inicial: `docker compose run --rm seed node apps/api/dist/seed/seed.js --force`.
+
+---
+
 ## Pruebas
 
 ```bash
 npm test -w @andina/api
 ```
+
+Los escenarios de arriba cargan datos; esto comprueba la lógica sin base de datos de por medio.
 
 Trece casos sobre la normalización, que es la pieza más frágil del sistema: es donde tres
 formatos ajenos que cambian cuando quieren se convierten en un tipo único, y donde un fallo no
