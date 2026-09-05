@@ -249,6 +249,9 @@ que de verdad explica este proyecto. En corto:
 | Ingesta | Síncrona, con el informe del lote en la propia respuesta |
 | Estado | Derivado del evento más reciente, nunca sobrescrito por el último en llegar |
 
+Y si vas a **trabajar sobre este código**, empieza por [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md):
+explica cómo funciona, dónde se cambia cada cosa y qué reglas no conviene romper.
+
 También hay [`docs/AI.md`](docs/AI.md) con el uso de IA en el desarrollo.
 
 ---

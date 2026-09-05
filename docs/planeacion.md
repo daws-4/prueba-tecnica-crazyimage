@@ -31,6 +31,11 @@ Después de ti, **el código lo mantendrá un equipo de dos personas que no part
 
 Respuesta corta de lo que se usará para cada petición del cliente
 
+03 «Usen Postgres y Mongo, que las dos ya están contratadas en el proyecto.»
+    Solo se usará MongoDB, utilizar dos motores distittos de base de datos requiere una infraestructura más costosa y Mongo cumple con los requerimientos de atomicidad de los documentos mejor que postgresql
+
+
+
 ## ** Núcleo obligatorio **
 
 Si algo varía o no de lo propuesto en el documento
