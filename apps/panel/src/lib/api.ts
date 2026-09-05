@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PAGE_SIZE,
   shipmentDetailSchema,
   shipmentListResponseSchema,
   type ListShipmentsQuery,
@@ -58,16 +59,17 @@ const request = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
 };
 
 export const listShipments = async (
-  query: Partial<Pick<ListShipmentsQuery, 'status' | 'carrierId' | 'stalledForHours' | 'cursor'>> & {
-    limit?: number;
-  },
+  query: Partial<
+    Pick<ListShipmentsQuery, 'status' | 'carrierId' | 'stalledForHours' | 'after' | 'before'>
+  > & { limit?: number },
 ): Promise<ShipmentListResponse> => {
   const params = new URLSearchParams();
   if (query.status !== undefined) params.set('status', query.status);
   if (query.carrierId !== undefined) params.set('carrierId', query.carrierId);
   if (query.stalledForHours !== undefined) params.set('stalledForHours', String(query.stalledForHours));
-  if (query.cursor !== undefined) params.set('cursor', query.cursor);
-  params.set('limit', String(query.limit ?? 25));
+  if (query.after !== undefined) params.set('after', query.after);
+  if (query.before !== undefined) params.set('before', query.before);
+  params.set('limit', String(query.limit ?? DEFAULT_PAGE_SIZE));
 
   return request(`/shipments?${params.toString()}`, shipmentListResponseSchema);
 };

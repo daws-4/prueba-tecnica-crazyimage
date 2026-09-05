@@ -46,8 +46,14 @@ export const listShipmentsQuerySchema = z.object({
    */
   stalledForHours: z.coerce.number().int().min(1).max(24 * 30).optional(),
 
-  /** Cursor opaco devuelto por la pagina anterior. */
-  cursor: z.string().optional(),
+  /**
+   * Cursores opacos, uno por sentido. Se usan de uno en uno.
+   *
+   * Se llaman `after` y `before` y no `cursor` a secas porque la paginacion es
+   * bidireccional: un solo nombre obligaria a adivinar hacia donde apunta.
+   */
+  after: z.string().optional(),
+  before: z.string().optional(),
 
   limit: z.coerce.number().int().min(1).max(100).default(DEFAULT_PAGE_SIZE),
 });

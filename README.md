@@ -39,11 +39,15 @@ Hace falta Node 22+ y un Mongo escuchando en `localhost:27017`.
 
 ```bash
 npm install
-npm run build -w @andina/contracts
-npm run seed  -w @andina/api      # datos de ejemplo
-npm run start -w @andina/api      # API en :3001
-npm run dev   -w @andina/panel    # panel en :3000
+npm run build -w @andina/contracts  # el API y el panel consumen su salida compilada
+npm run build -w @andina/api        # seed, start y escenario ejecutan dist/, que no viene en el repo
+npm run seed  -w @andina/api        # datos de ejemplo
+npm run start -w @andina/api        # API en :3001
+npm run dev   -w @andina/panel      # panel en :3000
 ```
+
+Los dos `build` van primero y en ese orden: el API compila contra la salida de `contracts`, y los
+tres comandos siguientes arrancan código ya compilado.
 
 ---
 
@@ -76,6 +80,16 @@ curl -X POST http://localhost:3001/ingest/andes-express \
   -H 'Content-Type: application/json' \
   -d '[{"guia":"AC-4471","evento":"INCIDENCIA","ts":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","ciudad":"Cúcuta"}]'
 ```
+
+En **PowerShell** ese comando no vale: `curl` ahí es otro programa y `$(date …)` no existe. El
+equivalente, en una línea:
+
+```powershell
+$ts = [DateTime]::UtcNow.ToString("s") + "Z"; Invoke-RestMethod -Method Post http://localhost:3001/ingest/andes-express -ContentType 'application/json; charset=utf-8' -Body "[{`"guia`":`"AC-4471`",`"evento`":`"INCIDENCIA`",`"ts`":`"$ts`",`"ciudad`":`"Cúcuta`"}]"
+```
+
+El `charset=utf-8` no es adorno: sin él, PowerShell manda los acentos mal y la ciudad se guarda
+rota. La misma regla vale para los `curl` de la sección siguiente.
 
 La pantalla se actualiza sola, sin recargar. El API abre un flujo de avisos (SSE) y el panel
 escucha; cuando entra un lote, el aviso llega en el momento.
@@ -119,7 +133,7 @@ curl -X POST http://localhost:3001/ingest/rutasur \
 | Método | Ruta | Qué hace |
 |---|---|---|
 | `POST` | `/ingest/:carrierId` | Recibe un lote de un transportista y devuelve el informe: cuántos entraron, cuántos eran reenvíos, cuántos quedaron en cuarentena y por qué |
-| `GET` | `/shipments` | Listado paginado por cursor. Filtros: `status`, `carrierId`, `stalledForHours`; tamaño con `limit` |
+| `GET` | `/shipments` | Listado con paginación bidireccional por cursor (`after` / `before`). Filtros: `status`, `carrierId`, `stalledForHours`; tamaño con `limit` (10, 20 o 50) |
 | `GET` | `/shipments/:trackingNumber` | Estado actual y línea de tiempo ordenada |
 | `GET` | `/stream` | Flujo de avisos en vivo (SSE). Emite cuando termina de entrar un lote, y late cada 20 s |
 

@@ -32,79 +32,50 @@ Después de ti, **el código lo mantendrá un equipo de dos personas que no part
 Respuesta corta de lo que se usará para cada petición del cliente
 
 01 «Que el equipo pueda buscar por número de guía y ver toda la historia del envío en una sola pantalla.»
-    Dashboard en Nextjs con paginación y busqueda implementados
+    Dashboard en Nextjs con paginación y busqueda implementados, junto con una línea de tiempo que permite ver el historial de cada envío y poder ver los detalles del mismo
 
 02 «Los tres nos mandan lo mismo pero cada uno a su manera; ustedes normalícenlo.»
-    Se utilizarán adaptadores para cada transportista, cada adaptador se encargará de transformar los datos a un formato común para poder verlos iguales en el panel desarrollado
+    Un adaptador por transportista, pero el adaptador solo extrae los campos y declara de qué clase es su fecha, no traduce estados ni resuelve husos, eso lo hace un normalizador común a los tres, que es donde viven las reglas, la traducción del estado, el huso asumido, los umbrales de fecha y el cálculo de la identidad. La gramática es código, el vocabulario es dato. Por eso dar de alta un transportista nuevo no obliga a tocar nada de lo que ya funciona.
 
 03 «Usen Postgres y Mongo, que las dos ya están contratadas en el proyecto.»
-    Solo se usará MongoDB, utilizar dos motores distittos de base de datos requiere una infraestructura más costosa y Mongo cumple con los requerimientos de atomicidad de los documentos mejor que postgresql
+    Solo se usará MongoDB, utilizar dos motores distittos de base de datos requiere una infraestructura más costosa, la consistencia que importa aquí es dentro de un documento, no entre tablas, y Mongo la da sin necesidad de transacción. La potencia transaccional extra de Postgres existe, pero en este dominio no se usaría. Y el motivo principal del descarte no es el coste: partir el histórico entre dos motores convierte cada ingesta en una escritura que deja de ser atómica
 
 04 «A veces reenvían los mismos eventos, pero eso no pasa nada, ¿verdad?»
-    Se dejarán registrados todos los eventos, no se eliminarán los eventos duplicados solo para llevar constancia que sí se recibieron
+    Ninguno de los tres manda un identificador de evento, así que la identidad se fabrica de su contenido transportista + guía + instante truncado al minuto + estado. Un reenvío no se guarda dos veces: se cuenta sobre el evento que ya existía (timesReceived), y en la pantalla se ve "recibido 2 veces". Así queda constancia de que llegó sin duplicar la línea de tiempo.
 
 05 «El estado actual lo guardan en un campo y lo actualizan cada vez que llega un evento nuevo.»
-    Cuando llega un evento nuevo se buscará el documento que tenga ese número de guía y se le agregará el nuevo evento, también se actualizará el campo de estado con el nuevo estado
+   Los eventos van en su propia colección, no dentro del envío. Y el estado actual no se sobrescribe con el evento que llega, se compara y solo lo mueve el que ocurrió más tarde. Los lotes llegan tres veces al día y desordenados, así que el último en llegar no es el más reciente
 
 06 «Si viene algún campo raro que no conocemos, ignórenlo y sigan.»
-    Realizado
+    Realizado, cualquier campo extra se ignora, pero no es lo mismo a recibir un campo reconocido que incluya información que no se esperaba, esos casos van a una cuarentena para ser revisados
 
 07 «Nos mandan lotes de hasta cinco mil eventos de golpe, tres veces al día.»
-    No supone un problema
+    Respuesta síncrona con el informe del lote, escritura por bloques con éxito parcial, y un límite de tamaño para acotar el tiempo por diseño
 
 08 «Camila va a tener el panel abierto toda la jornada, así que tiene que estar siempre al día.»
-    Se implementó Server Sent Events más Polling de respaldo cada 20 segundos
+    Se implementó Server Sent Events con latidos cada 20 segundos más Polling de respaldo que solo refresca si pasan 60 segundos sin señal
 
 09 «En enero entra un cuarto transportista y no quiero volver a pagar por lo mismo.»
+    Cuesta una sesión de desarrollo y un despliegue. Descarté las alternativas que prometían cero programador —un perfil declarativo configurable, un mapeador visual— porque esa promesa no se sostiene cuando el formato del cuarto no se parece a los tres actuales, y el precio de que falle es romper la operación diaria de los que ya funcionan.
 
+    Y ahí está la respuesta a «no volver a pagar por lo mismo» no vuelve a pagar por lo mismo, paga por lo nuevo. Leer un formato que nadie ha visto todavía no lo hace gratis ninguna arquitectura. Lo que sí garantizo es que no paga otra vez por la normalización, la deduplicación, el orden de los eventos ni la pantalla, eso ya está y no se toca.
 
 10 «Y que el panel y el API compartan los tipos, que ya nos pasó de romper la pantalla al cambiar algo por detrás.»
-    Realizado
+    Realizado, un esquema del que se derivan los tipos, validado en ejecución y no solo al compilar
 
 
 
 ## ** Núcleo obligatorio **
 
-Núcleo obligatorio
-Todo lo de esta página debe existir. Si algo se queda fuera, dilo y explica por qué: eso puntúa más que fingir que
-está.
-A · Ingesta y normalización
-B · Datos y persistencia
-C · API de consulta
-D · Panel
-E · Tipos y entrega
-Un endpoint que reciba un lote de eventos de un transportista y lo procese. Los tres formatos de la
-página anterior deben entrar por ahí.
-La normalización a un modelo único es el corazón del ejercicio: nombres de campo, estados, fechas
-y zonas horarias. Que el tipo de un evento normalizado no dependa de quién lo mandó.
-Añadir el cuarto transportista en enero no debería obligar a tocar la lógica que ya funciona. Cómo lo
-consigues es tuyo.
-Decide qué hace tu código cuando un evento del lote no se puede interpretar, y déjalo escrito.
-Al menos un motor de base de datos real, con datos que sobrevivan a un reinicio.
-El reparto entre lo relacional y lo documental es una decisión tuya y la vamos a leer con atención.
-Cualquiera de las dos, o las dos, puede ser la respuesta correcta si viene con su argumento.
-Un seeder o unos datos de ejemplo con los tres formatos, para que podamos ver el sistema con
-contenido dentro.
-Responde en el documento de decisiones: ¿qué pasa con tu modelo cuando haya dos millones
-de eventos y cuatro transportistas?
-Buscar un envío por número de guía y devolver su estado actual y su línea de tiempo ordenada.
-Validación en el borde, códigos de respuesta coherentes y errores que digan algo útil a quien los
-recibe.
-Un listado paginado de envíos, con al menos un filtro que te parezca útil para Camila.
-Una pantalla en Next.js: buscador y detalle del envío con su línea de tiempo.
-Cómo obtienes y refrescas los datos es cosa tuya — renderizado en servidor, en cliente, una mezcla,
-revalidación, lo que prefieras. Solo cuéntanos en el documento de decisiones qué te llevó por ahí.
-Sin maquetar: legible basta. Si te apetece cuidar la experiencia, adelante.
-El panel y el API deben compartir la definición de los datos que se intercambian. Cómo lo resuelves
-es parte de la respuesta.
-strict activado. Un any puede estar justificado; diez, difícilmente.
-Repositorio público en GitHub con historial real: mínimo seis commits que cuenten la historia del
-trabajo. Un único initial commit con todo dentro nos deja sin ver cómo trabajaste.
+Si algo varía o no de lo propuesto en el documento
+
+El cliente dice que se usen dos motores de base de datos y solo se usa uno, de resto todo está tal cual lo piden
 
 ## ** Un extra, si el núcleo ya está cerrado**
 
 De las opciones propuestas, implementar Server Sent Events más Polling para que el panel del usuario (Camila) se actualice solo cuando hay nuevos eventos, que no sea necesario recargar la página manualmente.
 
 ## ** Cobertura de Pruebas **
+
 Cobertura de pruebas. Con cuatro casos bien elegidos ya nos dices más que con cuarenta.
 un caso típico, tres casos límites, dos con tres transportistas, dos con cuatro transportistas

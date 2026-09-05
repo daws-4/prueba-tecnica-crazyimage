@@ -256,6 +256,26 @@ ahí y cada evento guarda su `sourceOffsetMinutes`.
 **Piensa dos veces antes de meterlo en la clave de deduplicación.** Solo entran campos cuya
 normalización es determinista y de conjunto cerrado; el criterio está en `dedup-key.ts`.
 
+### Cómo funciona la paginación
+
+Es **bidireccional por cursor y no guarda nada**. Ir hacia atrás no consiste en recordar por dónde
+se pasó: es la misma consulta con la comparación y el orden invertidos, tomando los que quedan
+justo antes del cursor y dándole la vuelta a la página para mostrarla. Está en `list()` de
+[`shipments.service.ts`](../apps/api/src/shipments/shipments.service.ts).
+
+Consecuencias que conviene saber:
+
+- **Retroceder cuesta lo mismo que avanzar**: un salto por índice, no un recorrido.
+- **El servidor no recuerda quién está mirando qué.** Toda la posición viaja en la URL.
+- **No hay «página 7».** Un cursor apunta a una fila concreta, no a un número de página. Es el
+  precio de que la paginación no se descoloque cuando entra un lote entre dos peticiones — que con
+  tres lotes al día y cinco mil eventos por lote pasa de verdad.
+- **Cambiar de filtro o de tamaño vuelve al principio**, porque un cursor deja de significar lo
+  mismo en cuanto el listado cambia.
+
+El desempate por `_id` dentro del cursor es lo que evita que un envío se repita o se salte cuando
+varios comparten el mismo `lastEventAt`.
+
 ### Añadir un filtro al listado
 
 `query.ts` en el contrato y `buildFilter()` en `shipments.service.ts`. Comprueba que hay un índice

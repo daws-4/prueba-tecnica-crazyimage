@@ -17,7 +17,8 @@ y dónde se cambia cada cosa; [`docs/DECISIONS.md`](docs/DECISIONS.md) explica p
 docker compose up                          # entorno completo, siembra datos la primera vez
 npm install                                # espacios de trabajo de npm, desde la raíz
 npm run build -w @andina/contracts         # OBLIGATORIO tras tocar el contrato
-npm test -w @andina/api                    # 13 pruebas de normalización
+npm run build -w @andina/api               # necesario antes de seed, start y escenario
+npm test -w @andina/api                    # 13 pruebas de normalización (compila por su cuenta)
 npm run typecheck --workspaces             # los tres paquetes
 npm run escenario -w @andina/api -- todos  # carga los seis escenarios de demostración
 ```

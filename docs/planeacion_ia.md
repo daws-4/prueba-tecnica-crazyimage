@@ -1352,10 +1352,20 @@ que sostendrá la decisión sobre lotes desordenados (frase 05).
 
 > **La deduplicación decide qué es canónico, no qué se conserva.**
 
-Cada evento recibido se registra en crudo pase lo que pase, incluso los descartados por
-duplicados o por cuarentena. La clave solo gobierna la colección `events`, que es una
-proyección reconstruible. Con esa red debajo, equivocarse de clave o de huso deja de ser un
-error irreparable y pasa a ser un reproceso.
+De cada evento se conserva su payload en crudo, tal y como llegó: el de los que entran, dentro
+del propio evento, y el de los que no se pudieron interpretar, en la colección de cuarentena.
+La clave de deduplicación solo gobierna la colección `events`, que es una proyección
+reconstruible. Con esa red debajo, equivocarse de clave o de huso deja de ser un error
+irreparable y pasa a ser un reproceso.
+
+**Matiz honesto sobre los reenvíos:** de un evento que ya existe **no se vuelve a guardar el
+payload**. Se incrementa su contador y se anota cuándo llegó por última vez, nada más. La razón
+es que un reenvío del mismo evento trae, por definición, el mismo contenido — y guardar N copias
+de lo mismo multiplica el almacenamiento sin añadir información. El coste de esa decisión es
+real y conviene saberlo: si un transportista reenviara un evento con el payload **modificado**
+manteniendo la misma identidad —misma guía, mismo minuto, mismo estado, pero otra ciudad, por
+ejemplo— esa corrección se perdería en silencio. No es un caso que se haya visto, pero es el
+punto ciego de la deduplicación tal y como está.
 
 ### 3.9 Borrador para DECISIONS.md — *reescribir con palabras propias*
 

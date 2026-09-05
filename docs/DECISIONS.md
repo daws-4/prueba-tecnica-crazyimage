@@ -27,9 +27,14 @@ Con una semana más la decisión no cambiaría, lo que sí podría añadir es re
 ## MOTOR Y MODELADO DE BASE DE DATOS
 
 ### Situación
+El cliente pidió usar Postgres y Mongo porque las dos ya están contratadas.
 ### Decisión
+Se decidió usar un solo motor, MongoDB, hay que conservar el payload crudo en cada evento, tiene tres formas hoy y cuatro en enero, la lectura es "traer un agregado" y no cruzar tablas, por lo que no hace indispensable el uso de postgresql. 
 ### Alternativas descartadas
+PostgreSQL 
+
 ### Qué sacrifiqué
+
 ### Qué rompe esto a escala 100×
 ### Qué haría con una semana más
 

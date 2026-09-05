@@ -51,10 +51,14 @@ export type Location = z.infer<typeof locationSchema>;
 export const paginatedSchema = <T extends z.ZodType>(item: T) =>
   z.object({
     items: z.array(item),
+    /** Para avanzar. `null` si esta es la ultima pagina. */
     nextCursor: z.string().nullable(),
+    /** Para retroceder. `null` si esta es la primera. */
+    prevCursor: z.string().nullable(),
   });
 
 export interface Paginated<T> {
   items: T[];
   nextCursor: string | null;
+  prevCursor: string | null;
 }

@@ -51,7 +51,9 @@ interface Vista {
   readonly status?: ShipmentStatus | undefined;
   readonly parados: boolean;
   readonly limit: ShipmentPageSize;
-  readonly cursor?: string | undefined;
+  /** Cursores opacos, uno por sentido. Nunca van los dos a la vez. */
+  readonly after?: string | undefined;
+  readonly before?: string | undefined;
 }
 
 /**
@@ -61,18 +63,23 @@ interface Vista {
  * habia tres funciones que armaban la URL a trozos y cada control nuevo obligaba
  * a tocar las tres; con un solo sitio, anadir un parametro es anadirlo aqui.
  *
- * Cambiar de filtro o de tamano **vuelve a la primera pagina**: el cursor apunta
- * a una posicion dentro de un listado concreto y no significa lo mismo cuando el
- * listado cambia.
+ * **Cualquier cambio que no sea pasar de pagina borra los dos cursores** y vuelve
+ * al principio: un cursor apunta a una posicion dentro de un listado concreto y
+ * deja de significar lo mismo en cuanto el listado cambia. Por eso el valor por
+ * defecto de `after` y `before` es "ninguno", y solo los pone quien navega.
  */
-const enlace = (vista: Vista, cambios: Partial<Vista> & { readonly cursor?: string }): string => {
-  const siguiente: Vista = { ...vista, cursor: undefined, ...cambios };
+const enlace = (
+  vista: Vista,
+  cambios: Partial<Vista> & { readonly after?: string; readonly before?: string },
+): string => {
+  const siguiente: Vista = { ...vista, after: undefined, before: undefined, ...cambios };
   const query = new URLSearchParams();
 
   if (siguiente.status !== undefined) query.set('status', siguiente.status);
   if (siguiente.parados) query.set('parados', '1');
   if (siguiente.limit !== DEFAULT_PAGE_SIZE) query.set('limit', String(siguiente.limit));
-  if (siguiente.cursor !== undefined) query.set('cursor', siguiente.cursor);
+  if (siguiente.after !== undefined) query.set('after', siguiente.after);
+  if (siguiente.before !== undefined) query.set('before', siguiente.before);
 
   const cadena = query.toString();
   return cadena.length === 0 ? '/' : `/?${cadena}`;
@@ -82,7 +89,8 @@ interface SearchParams {
   readonly status?: string;
   readonly parados?: string;
   readonly limit?: string;
-  readonly cursor?: string;
+  readonly after?: string;
+  readonly before?: string;
 }
 
 export default async function Page({
@@ -96,13 +104,17 @@ export default async function Page({
     status: esEstado(params.status) ? params.status : undefined,
     parados: params.parados === '1',
     limit: leerTamano(params.limit),
-    cursor: params.cursor,
+    after: params.after,
+    // Si llegan los dos, manda `after`: dos sentidos a la vez no significan nada
+    // y prefiero una pagina coherente antes que un error en la cara de Camila.
+    before: params.after === undefined ? params.before : undefined,
   };
 
-  const { items, nextCursor } = await listShipments({
+  const { items, nextCursor, prevCursor } = await listShipments({
     ...(vista.status !== undefined ? { status: vista.status } : {}),
     ...(vista.parados ? { stalledForHours: HORAS_PARADO } : {}),
-    ...(vista.cursor !== undefined ? { cursor: vista.cursor } : {}),
+    ...(vista.after !== undefined ? { after: vista.after } : {}),
+    ...(vista.before !== undefined ? { before: vista.before } : {}),
     limit: vista.limit,
   });
 
@@ -171,7 +183,18 @@ export default async function Page({
         </table>
       )}
 
+      {/* Cursor y no numero de pagina: con dos millones de eventos, saltarse
+          cincuenta mil filas cuesta cada vez mas, y un lote que entra entre dos
+          peticiones descolocaria las paginas. Ir hacia atras no guarda por donde
+          se paso: es la misma consulta con la comparacion invertida, asi que
+          retroceder cuesta lo mismo que avanzar. */}
       <div className="paginacion">
+        {prevCursor !== null ? (
+          <Link href={enlace(vista, { before: prevCursor })}>← Anteriores</Link>
+        ) : (
+          <span className="meta">Principio de la lista</span>
+        )}
+
         <span className="meta tamanos">
           Mostrar
           {SHIPMENT_PAGE_SIZES.map((tamano) => (
@@ -187,14 +210,10 @@ export default async function Page({
           por página
         </span>
 
-        {/* Cursor y no numero de pagina: con dos millones de eventos, saltarse
-            cincuenta mil filas cuesta cada vez mas, y un lote que entra entre dos
-            peticiones descolocaria las paginas. El precio es que no hay "pagina
-            anterior" sin guardar los cursores ya vistos, y no compensa. */}
         {nextCursor !== null ? (
-          <Link href={enlace(vista, { cursor: nextCursor })}>Ver más envíos →</Link>
+          <Link href={enlace(vista, { after: nextCursor })}>Siguientes →</Link>
         ) : (
-          <span className="meta">No hay más envíos</span>
+          <span className="meta">Final de la lista</span>
         )}
       </div>
     </>

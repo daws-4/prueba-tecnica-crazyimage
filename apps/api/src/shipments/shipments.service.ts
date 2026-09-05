@@ -61,28 +61,53 @@ export class ShipmentsService {
    * y sin llegar a entregado. Filtrar por estado dice en que punto esta cada
    * envio; esto dice **cuales van a generar una llamada**. Es la diferencia
    * entre una lista que se consulta y una lista sobre la que se trabaja.
+   *
+   * **La paginacion es bidireccional y no guarda nada.** Ir hacia atras no
+   * consiste en recordar por donde se paso: se hace la misma consulta con la
+   * comparacion y el orden invertidos, se toman los que quedan justo antes del
+   * cursor y se le da la vuelta a la pagina para mostrarla. Asi retroceder
+   * cuesta exactamente lo mismo que avanzar —un salto por indice— y el servidor
+   * sigue sin recordar quien esta mirando que.
    */
   async list(query: ListShipmentsQuery): Promise<ShipmentListResponse> {
-    const filter = this.buildFilter(query);
+    const haciaAtras = query.before !== undefined;
 
-    // Se pide uno de mas para saber si hay pagina siguiente sin contar el total,
-    // que en una coleccion grande es una consulta cara y que nadie mira.
+    // Uno de mas para saber si hay pagina al otro lado sin contar el total, que
+    // en una coleccion grande es una consulta cara y que nadie mira.
     const documents = await this.mongo.shipments
-      .find(filter)
-      .sort({ lastEventAt: -1, _id: -1 })
+      .find(this.buildFilter(query))
+      .sort(haciaAtras ? { lastEventAt: 1, _id: 1 } : { lastEventAt: -1, _id: -1 })
       .limit(query.limit + 1)
       .toArray();
 
-    const hasMore = documents.length > query.limit;
-    const page = hasMore ? documents.slice(0, query.limit) : documents;
-    const last = page.at(-1);
+    const hayMas = documents.length > query.limit;
+    const recortados = documents.slice(0, query.limit);
+
+    // Yendo hacia atras la consulta devuelve los mas antiguos primero, que es lo
+    // que hace falta para coger los que estan JUNTO al cursor y no los del final
+    // de la coleccion. Para mostrarlos hay que devolverles el orden de siempre.
+    const page = haciaAtras ? recortados.reverse() : recortados;
+
+    const primero = page.at(0);
+    const ultimo = page.at(-1);
+    const cursorDe = (doc: ShipmentDocument | undefined): string | null =>
+      doc === undefined ? null : encodeCursor({ lastEventAt: doc.lastEventAt, trackingNumber: doc._id });
+
+    if (haciaAtras) {
+      return {
+        items: page.map((doc) => this.toSummary(doc)),
+        // Hacia adelante siempre hay algo: es de donde venimos.
+        nextCursor: cursorDe(ultimo),
+        // Hacia atras solo si la consulta encontro mas de los que caben.
+        prevCursor: hayMas ? cursorDe(primero) : null,
+      };
+    }
 
     return {
       items: page.map((doc) => this.toSummary(doc)),
-      nextCursor:
-        hasMore && last !== undefined
-          ? encodeCursor({ lastEventAt: last.lastEventAt, trackingNumber: last._id })
-          : null,
+      nextCursor: hayMas ? cursorDe(ultimo) : null,
+      // Si no venimos de ninguna parte, estamos en la primera pagina.
+      prevCursor: query.after === undefined ? null : cursorDe(primero),
     };
   }
 
@@ -104,14 +129,26 @@ export class ShipmentsService {
       conditions.push({ lastEventAt: { $lt: threshold }, currentStatus: { $ne: 'entregado' } });
     }
 
-    const cursor = decodeCursor(query.cursor);
-    if (cursor !== null) {
-      // El desempate por `_id` es lo que evita que un envio se repita o se
-      // salte cuando varios comparten el mismo `lastEventAt`.
+    // Los dos cursores son la MISMA comparacion con el signo cambiado. El
+    // desempate por `_id` es lo que evita que un envio se repita o se salte
+    // cuando varios comparten el mismo `lastEventAt`, que con lotes de cinco mil
+    // eventos pasa constantemente.
+    const after = decodeCursor(query.after);
+    if (after !== null) {
       conditions.push({
         $or: [
-          { lastEventAt: { $lt: cursor.lastEventAt } },
-          { lastEventAt: cursor.lastEventAt, _id: { $lt: cursor.trackingNumber } },
+          { lastEventAt: { $lt: after.lastEventAt } },
+          { lastEventAt: after.lastEventAt, _id: { $lt: after.trackingNumber } },
+        ],
+      });
+    }
+
+    const before = decodeCursor(query.before);
+    if (before !== null) {
+      conditions.push({
+        $or: [
+          { lastEventAt: { $gt: before.lastEventAt } },
+          { lastEventAt: before.lastEventAt, _id: { $gt: before.trackingNumber } },
         ],
       });
     }
