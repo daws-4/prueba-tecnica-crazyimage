@@ -14,7 +14,77 @@ contexto.
 
 | # | Pregunta | Estado |
 |---|---|---|
-| P01 | Los tres formatos de entrada y cómo entra el cuarto transportista | **Debatida — falta elección del autor** |
+| P01 | Los tres formatos de entrada y cómo entra el cuarto transportista | **Cerrada — decisión: A+** |
+
+---
+
+## Resumen de lo decidido
+
+Para releer dentro de dos semanas sin tener que recorrer el debate entero. Cada punto
+enlaza con la sección que lo argumenta.
+
+### La decisión
+
+**A+ — un adaptador en código por transportista, con el vocabulario como dato editable
+desde el panel.** (§1.6)
+
+> **La gramática es código. El vocabulario es dato.**
+
+| | Qué incluye | Dónde vive | Quién lo cambia |
+|---|---|---|---|
+| **Gramática** | estructura del payload, rutas de los campos, formato de la fecha | un adaptador `.ts` por transportista, en el repositorio | programador, con despliegue |
+| **Vocabulario** | valores de estado y su traducción, zona horaria, nombre, activo | una tabla, editable en el panel | atención al cliente, al momento |
+
+### Por qué, en orden de peso
+
+1. **Frecuencia.** Una tarea que haces dos veces al año es una tarea que nunca aprendes.
+   Dar de alta un transportista pasa 1–2 veces al año → va donde hay manos entrenadas, que
+   es el repositorio. Traducir un estado nuevo pasa varias veces al año y lo sabe hacer
+   mejor atención al cliente → va al panel. (§1.6)
+2. **Responsabilidad.** Configurar un huso horario mal produce respuestas erróneas al
+   cliente. Esa decisión no se traslada a quien no puede evaluar el riesgo ni deshacerlo.
+3. **El equipo existe.** El encargo dice que dos personas mantendrán esto. Un despliegue al
+   año no es un problema para un equipo que existe; sí lo sería heredar un motor genérico
+   que no escribieron.
+4. **Presupuesto.** ~2 h frente a ~4 h (opción C) y >15 h (mapeador visual), sobre un total
+   de ~9 h. Las horas liberadas van a lo que más puntúa: robustez de ingesta y
+   `DECISIONS.md`.
+
+### Qué se sacrifica, dicho sin maquillar
+
+**El cuarto transportista cuesta un día de desarrollo y un despliegue.** No hay formulario
+que lo evite. Lo que sí se garantiza es que su llegada no rompa nada de lo que ya
+funcionaba, que lo que no se entienda quede visible en cuarentena en vez de perderse, y que
+el crudo esté guardado para reprocesar en cuanto el adaptador esté listo.
+
+### Alternativas descartadas y su motivo en una línea
+
+| Alternativa | Motivo del rechazo |
+|---|---|
+| **A puro** (todo en código, sin vocabulario editable) | El incidente frecuente —estado desconocido— exigiría un despliegue, y eso vuelve a bloquear a atención al cliente esperando a desarrollo. |
+| **B** (perfil declarativo en base de datos) | Promete que todos los transportistas futuros entran por formulario, y es una promesa que no se puede sostener. Su techo obliga a tocar el motor compartido por los cuatro. (§1.4) |
+| **C** (híbrido declarativo + puerta de escape) | Buena, pero su ventaja —cero despliegue en enero— solo vale si no hay programador disponible, y el encargo dice que sí lo habrá. Cuesta el doble y es la más difícil de heredar. (§1.4, §1.5) |
+| **Mapeador visual** (niveles 1–3) | Herramienta potente para una tarea que se hace dos veces al año; >15 h de trabajo; empeora la herencia. Archivado como *"qué haría con una semana más"*. (§1.7) |
+| **Código escrito por el usuario en el panel** | Ejecución de código arbitrario, y ese código no tendría control de versiones, revisión, pruebas ni vuelta atrás. (§1.7) |
+
+### Decisiones menores que ya están tomadas
+
+- **El evento canónico** lleva `precision: 'second' | 'minute'` porque RutaSur informa al
+  minuto, y `raw` siempre, porque es lo que permite reprocesar. (§1.3)
+- **La zona horaria pertenece al reloj del transportista, no a la ciudad del evento.**
+  Verificado con el dato del enunciado: RutaSur sella en hora venezolana un evento ocurrido
+  en Colombia. (§1.1)
+- **Tres casos distintos de "dato que no encaja"**, con tres respuestas: campo extra → se
+  ignora; campo obligatorio ausente → cuarentena; valor desconocido de campo conocido →
+  cuarentena. Ignorar no es lo mismo que perder. (§1.4)
+- **El fallo peligroso no es el que falla, es el que funciona y miente** (una fecha `MM/DD`
+  leída como `DD/MM`). De ahí la vista previa antes de guardar y el rechazo a cualquier
+  análisis "inteligente" de fechas. (§1.4)
+- **El objetivo de diseño no es cubrir el futuro, es abaratar el fallo.** El espacio de
+  formatos posibles es infinito y lo inventan terceros; lo que se puede controlar es que la
+  sorpresa sea acotada, visible y barata de arreglar. (§1.4)
+- **Regla de tres para hacer crecer el código compartido:** una utilidad no se generaliza
+  porque un transportista la necesite, sino cuando la necesita el tercero. (§1.4)
 
 ---
 
@@ -92,7 +162,7 @@ Dos campos son decisiones ya tomadas dentro de este tipo:
 - **`raw`**: el crudo se guarda siempre. Es lo que permite reprocesar cuando se corrige un
   mapeo, y es la red de seguridad del punto 1 de las notas personales.
 
-### 1.4 Las tres opciones
+### 1.4 Las opciones consideradas
 
 #### Glosario previo: "declarativo" y "manejador propio"
 
@@ -503,47 +573,220 @@ sobreingeniería o como indecisión, y entonces puntúa peor que una B bien cont
 
 ---
 
+#### Opción A+ — Adaptadores en código con el vocabulario como dato · **LA ELEGIDA**
+
+Es la opción A con una corrección que lo cambia todo: **el vocabulario de cada
+transportista sale del código y se guarda como dato editable desde el panel.**
+
+> **La gramática es código. El vocabulario es dato.**
+
+- **Gramática = código.** La estructura del payload, las rutas de los campos, la forma de
+  la fecha y el tipo de cada valor viven en un adaptador TypeScript por transportista, con
+  su esquema Zod y su tipo de entrada real.
+- **Vocabulario = dato.** Los valores de estado que manda cada transportista y su
+  traducción a los cinco estados canónicos, la zona horaria de su reloj, su nombre y si
+  está activo, viven en una tabla y se editan desde el panel sin desplegar.
+
+```ts
+// GRAMÁTICA — código, uno por transportista, en el repositorio
+interface CarrierAdapter {
+  readonly carrierId: string;
+  parse(raw: unknown, vocab: CarrierVocabulary): Result<ShipmentEvent, ParseError>;
+}
+
+// VOCABULARIO — dato, editable desde el panel, sin desplegar
+type CarrierVocabulary = {
+  carrierId: string;
+  name: string;
+  active: boolean;
+  timezone: string;                            // "America/Caracas" — el reloj del transportista
+  statusMap: Record<string, CanonicalStatus>;  // { "3": "in_transit", "EnRuta": "in_transit" }
+  onUnknownStatus: 'quarantine' | 'ignore';
+  notes: string;                               // dónde se justifica la asunción de zona horaria
+};
+```
+
+El adaptador sabe **dónde** está el estado y **cómo** leerlo. La tabla dice **qué
+significa**. Son dos conocimientos distintos, que además viven en dos cabezas distintas:
+el programador sabe leer un JSON anidado; Camila sabe que `ENTREGA_FALLIDA` es una
+incidencia porque lleva dos años leyéndolo en el portal del transportista.
+
+**El criterio que separa las dos mitades.** No es "técnico vs. no técnico", es esto:
+
+| Tarea | Frecuencia | Riesgo si sale mal | Quién sabe hacerla | Dónde vive |
+|---|---|---|---|---|
+| Mapear campos, estructura, formato de fecha | 1–2 veces al año | alto y **silencioso** | programador | **código** |
+| Elegir la zona horaria de un transportista | 1 vez, al darlo de alta | alto y silencioso | programador (con dato del transportista) | dato, pero **visible y con nota** |
+| Añadir `código 7 → incidencia` | varias veces al año | bajo y reversible | **atención al cliente** | **panel** |
+
+La primera fila es rara, arriesgada y técnica: va al repositorio, donde hay revisión,
+pruebas y vuelta atrás. La tercera es frecuente, barata y semántica: va al panel, donde
+está quien lo sabe.
+
+**Cómo entra el cuarto en enero:** un programador escribe
+`llanos-express.adapter.ts`, lo registra y despliega — un día de trabajo, aislado, sin
+tocar los otros tres. Al darlo de alta, quien opera rellena su vocabulario desde el panel.
+
+**Se gana:**
+- El coste de construcción más bajo de todas las opciones, con diferencia. Las horas que
+  libera van a lo que de verdad pesa en la nota: robustez de ingesta, deduplicación, estado
+  derivado, cuarentena y `DECISIONS.md`.
+- Tipado fuerte extremo a extremo: cada formato tiene su tipo de entrada real.
+- **Es lo más fácil de heredar**, y eso es dato de diseño explícito del encargo. Tres
+  adaptadores pequeños se leen en diez minutos cada uno. Un motor genérico con catálogo de
+  transformaciones es un sistema que hay que estudiar.
+- Resuelve el incidente **frecuente** —el estado desconocido— sin desplegar, que es donde
+  atención al cliente pierde tiempo de verdad.
+- La zona horaria de RutaSur sigue siendo un campo visible con su nota de asunción, no una
+  constante enterrada. La ventaja principal de B/C se conserva sin pagar B/C.
+
+**Se paga, y hay que decirlo sin maquillar:**
+- **El cuarto transportista cuesta un día de desarrollo y un despliegue.** No hay
+  formulario que lo evite. Esto es lo que se sacrifica y no se disimula.
+- El panel de transportistas gestiona vocabulario, no mapeo. Es una pantalla más modesta
+  que la de B/C, aunque sigue siendo una pantalla viva y no un CRUD muerto.
+- Riesgo de código repetido entre adaptadores (tres formas de parsear fechas que divergen).
+  Se mitiga con utilidades compartidas de fecha, no con un motor genérico.
+
+**A escala 100×:** irrelevante. El adaptador es una función pura sobre un objeto; 2M de
+eventos no lo notan. El vocabulario se lee una vez por lote y se cachea. Sí hace falta
+`vocabularyVersion` en cada evento, por el mismo motivo que en B/C: si alguien edita una
+traducción, hay que poder responder "¿con qué reglas se clasificó este evento?".
+
+---
+
 ### 1.5 Comparativa
 
-| | A · Adaptadores en código | B · Perfil declarativo | C · Híbrido |
-|---|---|---|---|
-| Cuarto transportista normal | despliegue | formulario | formulario |
-| Cuarto transportista raro | despliegue | **no se puede** | despliegue aislado |
-| Estado nuevo (código 7) | despliegue | formulario | formulario |
-| Panel de transportistas | metadatos | real | real |
-| Fuerza del tipado | máxima | en ejecución | mixta |
-| Zona horaria de RutaSur | constante en código | campo visible y editable | campo visible y editable |
-| Coste de construir | bajo | medio | alto |
-| Riesgo de romper por error humano | bajo | alto (mitigable con vista previa) | alto (mitigable) |
-| Material para `DECISIONS.md` | correcto | bueno | el mejor |
+| | A+ · **elegida** | A · código puro | B · declarativo | C · híbrido |
+|---|---|---|---|---|
+| Cuarto transportista | despliegue aislado | despliegue aislado | formulario | formulario |
+| Cuarto transportista raro | despliegue aislado | despliegue aislado | **no se puede** | despliegue aislado |
+| Estado nuevo (código 7) | **formulario** | despliegue | formulario | formulario |
+| Zona horaria de un transportista | **dato visible** | constante en código | dato visible | dato visible |
+| Panel de transportistas | vocabulario (vivo) | metadatos (muerto) | mapeo completo | mapeo completo |
+| Fuerza del tipado | máxima | máxima | en ejecución | mixta |
+| Coste de construir | **el más bajo** | el más bajo | medio | alto |
+| Facilidad de heredar | **la mayor** | la mayor | media | la menor |
+| Riesgo de romper por error humano | bajo | bajo | alto | alto |
 
-### 1.6 Recomendación
+### 1.6 Decisión
 
-**Opción C, entregando hoy los tres transportistas como perfiles declarativos.**
+**Opción A+: un adaptador en código por transportista, con el vocabulario de estados y la
+zona horaria como dato editable desde el panel.**
 
-El argumento no es técnico, es de negocio, y es el que se le daría al cliente:
+El razonamiento que la sostiene, en orden de peso:
 
-> El cliente dijo dos cosas en la misma reunión: *"en enero entra un cuarto y no quiero
-> volver a pagar por lo mismo"* y *"si viene un campo raro, ignórenlo y sigan"*. Las dos
-> apuntan a lo mismo: quiere que el sistema absorba cambios sin llamar al proveedor. Un
-> adaptador en código por transportista cumple la letra de la frase 09 —no se toca lo que
-> funciona— pero no su intención: sigue habiendo factura en enero. Convertir el mapeo en
-> dato editable hace que la factura de enero sea cero para el caso normal, y la puerta de
-> escape evita prometer algo que no se puede sostener cuando llegue un formato que no
-> encaje.
+**1 · El argumento de la frecuencia.** Es el que decide.
 
-Y hay un segundo argumento, más callado: **la incidencia frecuente en producción no es
-"llegó un transportista nuevo", es "llegó un valor de estado que no conocíamos"**. Eso
-pasa varias veces al año por transportista. Si esa incidencia se resuelve con un
-despliegue, atención al cliente vuelve a estar bloqueada esperando a desarrollo — que es
-exactamente el problema del que Camila quiere salir. En B y C se resuelve desde el panel.
+> Una tarea que haces dos veces al año es una tarea que nunca aprendes.
 
-Si el presupuesto de tiempo aprieta, el recorte honesto es: **entregar B completa y dejar
-el discriminador `strategy` en el tipo con un solo camino implementado**, documentando en
-`DECISIONS.md` que el camino `custom` está previsto en el modelo y no implementado. Eso es
-"decirlo y explicar por qué", que puntúa más que fingir.
+Dar de alta un transportista pasa una o dos veces al año. Si la herramienta para hacerlo es
+un formulario del panel, cada enero quien la use la reaprende desde cero, con prisa y con
+el transportista esperando. Las interfaces para tareas raras son malas interfaces casi por
+definición: no hay repetición que genere destreza. El programador que escribe el adaptador,
+en cambio, hace cosas de esa forma todas las semanas. **La tarea rara se pone donde están
+las manos entrenadas.**
 
-### 1.7 El bucle que justifica el panel
+El mismo criterio, aplicado al otro lado, da el resultado contrario: traducir un estado
+nuevo pasa varias veces al año, es una línea, es reversible, y **lo sabe hacer atención al
+cliente mejor que nadie**. Eso sí va al panel.
+
+**2 · La responsabilidad.** Si quien configura el huso horario se equivoca, un cliente
+recibe una respuesta errónea. Mover esa decisión a atención al cliente, sin revisión de
+código, sin pruebas y sin vuelta atrás, no es dar autonomía: es repartir riesgo hacia quien
+no puede evaluarlo.
+
+**3 · El argumento de C se cae con un dato del propio enunciado.** C valía la pena si el
+cliente no fuera a tener programador disponible en enero. El encargo dice que habrá **un
+equipo de dos personas manteniendo esto**. Lo hay. Un despliegue al año no es un problema
+para un equipo que existe — y sí lo sería la carga de mantener un motor genérico que ese
+mismo equipo no escribió.
+
+**4 · El presupuesto.** ~2 h para los tres adaptadores, el registro y el vocabulario, frente
+a ~4 h de C y más de 15 h del mapeador visual. En un presupuesto total de ~9 h, esa
+diferencia no es un detalle: es la que decide si `DECISIONS.md` se escribe con calma o a
+las tres de la mañana. Y `DECISIONS.md` es el entregable que más pesa.
+
+**Cómo se le cuenta al cliente, en lenguaje de negocio:**
+
+> "Consideré darles una pantalla para configurar transportistas nuevos ustedes mismos. La
+> descarté por una razón práctica: es algo que harían una o dos veces al año, y nadie llega
+> a dominar una herramienta que usa dos veces al año — cada enero la estarían reaprendiendo
+> con prisa. Ese trabajo lo hace mejor un programador en un día, aislado, sin tocar nada de
+> lo que ya funciona. Lo que sí les dejé en el panel es lo que sí pasa a menudo: cuando un
+> transportista empieza a mandar un estado nuevo, ustedes lo traducen desde la pantalla en
+> treinta segundos, sin llamar a nadie. Ahí es donde estaban perdiendo tiempo de verdad."
+
+**Lo que esta decisión NO promete**, y conviene decirlo antes de que lo pregunten: el
+cuarto transportista no funciona el primer día solo. Lo que se garantiza es que su llegada
+sea un suceso acotado, visible y de bajo riesgo — no rompe nada de lo que ya funcionaba, lo
+que no se entienda queda en cuarentena a la vista en vez de perderse, y el crudo está
+guardado para reprocesar en cuanto el adaptador esté listo.
+
+### 1.7 Alternativa descartada: el mapeador visual
+
+Vale la pena dejarla escrita con detalle porque es la alternativa más ambiciosa que se
+consideró, y porque el motivo del rechazo es más interesante que el rechazo.
+
+**Qué era.** Un asistente en el panel que permitiera dar de alta un transportista con
+cualquier formato sin escribir código, en tres niveles acumulativos:
+
+- **Nivel 1 · Descubrimiento.** El operador pega payloads reales (o el sistema coge los que
+  ya llegaron a cuarentena), el sistema los aplana y le muestra todas las rutas encontradas
+  con su valor de ejemplo, su tipo inferido y el porcentaje de veces que aparece. El
+  operador solo tiene que decir cuál es la guía, cuál la fecha y cuál el estado. No añade
+  poder expresivo: añade **descubrimiento**, y resuelve solo el caso de nombres y
+  anidamiento desconocidos.
+- **Nivel 2 · Transformaciones de catálogo cerrado.** Por campo, una tubería corta elegida
+  de una lista fija: `recortar`, `reemplazar(a,b)`, `partir(sep) → tomar(n)`,
+  `concatenar(rutaA, rutaB)`, `extraer por expresión regular`, `si está vacío usar(rutaB)`.
+  Con solo eso se caen tres de los cuatro casos que rompen un motor declarativo:
+  - `"AC 4471"` → `reemplazar(" ", "-")` → `AC-4471`
+  - `"Cúcuta, CO"` → `partir(",") → tomar(0)` y `tomar(1)` → ciudad y país
+  - estado partido en dos campos → `concatenar(tipo, "_", resultado)` produce
+    `"ENTREGA_FALLIDA"`, **y la tabla de estados que ya existe lo traduce a `incidencia`**.
+    Este último es el hallazgo bonito: un caso que parecía exigir código se resuelve
+    componiendo dos piezas que ya estaban.
+- **Nivel 3 · Un payload, varios eventos.** Un campo más: `iterarSobre: "movimientos"`.
+  *"Cada elemento de esta lista es un evento; estos otros campos se heredan del padre."*
+  Cierra el caso del envoltorio con lista dentro.
+
+Queda vivo un solo caso irresoluble: las fechas relativas (`"hace 2 horas"`), y no por
+falta de motor sino porque **al payload le falta información** que ninguna herramienta
+puede inventar.
+
+**Nivel 4 (código escrito por el usuario en el panel): rechazado aparte y antes.** Ejecutar
+JavaScript suministrado por un usuario exige aislamiento real, límites de CPU y tiempo, y
+es una superficie de seguridad seria. Pero el problema de fondo es peor: ese código no
+tendría control de versiones, ni revisión, ni pruebas, ni forma de volver atrás, y sería
+invisible para el equipo de dos personas que hereda el proyecto. Código escondido en una
+fila de base de datos es lo contrario de mantenible.
+
+**Por qué se descarta el conjunto, aun siendo la opción más potente:**
+
+1. **La frecuencia** (§1.6, argumento 1). Es una herramienta para una tarea que se hace dos
+   veces al año.
+2. **Es cobertura especulativa.** Se pagarían quince horas hoy por formatos que quizá no
+   lleguen nunca, cuando el principio que rige el resto del diseño es el contrario: no
+   cubrir el futuro, abaratar el fallo (§1.4, *El objetivo de diseño*). El mapeador es
+   cobertura amplia con una interfaz bonita encima.
+3. **No cabe en el presupuesto.** ~15 h frente a las ~9 h totales del ejercicio. Construirlo
+   a medias sería peor que no construirlo: el enunciado avisa de que dos opcionales a
+   medias suman menos que uno bien resuelto.
+4. **Empeora la herencia.** Un catálogo de transformaciones componibles es más difícil de
+   entender para quien llega nuevo que tres adaptadores de treinta líneas.
+
+**Qué se conserva de todo esto en la decisión final:** la tabla de estados precargada con
+los valores realmente vistos y su contador, la vista previa antes de guardar, el reproceso
+de la cuarentena, y el estado *"en configuración"* para un transportista dado de alta antes
+de que exista su adaptador — de modo que sus lotes se guarden en crudo desde el primer día
+y no se pierda nada mientras se escribe el código.
+
+**Y esto es exactamente el "qué haría con una semana más"** de `DECISIONS.md`: los niveles
+1 y 2, en ese orden, empezando por el descubrimiento de rutas, que es el que más valor da
+por hora invertida.
+
+### 1.8 El bucle que justifica el panel
 
 Esta es la pieza que conecta la decisión con la pantalla, y probablemente lo más vendible
 del proyecto:
@@ -582,25 +825,31 @@ sobra → se ignora y se sigue. Campo obligatorio ausente o estado no mapeable �
 no es interpretable → cuarentena, nunca descarte silencioso. Ignorar no es lo mismo que
 perder.
 
-### 1.8 Lo que hace falta decidir
+### 1.9 Lo que queda por decidir
 
-1. ¿A, B o C? (recomendación: C, con recorte a B si aprieta el tiempo)
-2. Si es B o C: ¿los perfiles de los tres transportistas actuales se cargan por *seeder*
-   y son editables, o se marcan como "de sistema" y no se pueden borrar desde el panel?
-   (recomendación: editables, pero no borrables si tienen envíos asociados)
-3. ¿La cuarentena y sus métricas entran en el alcance mínimo o son el opcional elegido?
+1. ~~¿A, B o C?~~ → **resuelto: A+** (§1.6).
+2. Los vocabularios de los tres transportistas actuales, ¿se cargan por *seeder* y quedan
+   editables? Recomendación: editables, pero **no borrables** si tienen eventos asociados.
+3. ¿La cuarentena y sus métricas entran en el alcance mínimo, o son el opcional elegido de
+   los cinco? Con A+ la cuarentena es casi obligatoria: es el único sitio donde acaba un
+   estado desconocido.
+4. ¿Entra el estado *"en configuración"* en la primera versión? Cuesta poco y es lo que
+   permite no perder nada mientras se escribe el adaptador de un transportista nuevo.
 
-### 1.9 Efecto sobre los puntos abiertos del encuadre
+### 1.10 Efecto sobre los puntos abiertos del encuadre
 
-- **No cierra ninguno** de los nueve puntos abiertos: esta pregunta no estaba en esa lista.
-- **Condiciona el punto 5** (zona horaria de RutaSur): con B o C deja de ser una constante
-  y pasa a ser configuración visible. La asunción sigue habiendo que escribirla, pero
-  "qué hacer si esa asunción falla" tiene respuesta operativa: se corrige en el panel y se
-  reprocesa.
-- **Adelanta trabajo del punto 9** (frase 09 / extensibilidad) y del opcional *reproceso de
-  lote*.
-- **Añade contexto nuevo al desarrollo:** existe un apartado de gestión de transportistas
-  en el panel, y con B o C ese apartado es funcionalidad de núcleo, no accesorio.
+- **Cierra el punto 5** (zona horaria de RutaSur). Se asume **`America/Caracas` (UTC−4)**,
+  deducido comparando el mismo envío con Andes Express, y vive como **dato visible con su
+  nota de justificación** en la ficha del transportista. Si la asunción falla: se corrige en
+  el panel y se reprocesa con el `raw` guardado.
+- **Adelanta el punto 8** (qué opcional se ataca): el reproceso de la cuarentena queda casi
+  resuelto como efecto colateral del diseño, sin esfuerzo dedicado.
+- **No cierra** los puntos 1, 2, 3, 4, 6, 7 ni 9. En particular, la semántica del endpoint de
+  ingesta (punto 6) y la clave de deduplicación (punto 7) siguen abiertas y son las
+  siguientes en importancia.
+- **Añade contexto nuevo al desarrollo:** el panel tiene un apartado de transportistas que
+  gestiona **vocabulario** (estados y zona horaria), no mapeo, y existe el estado
+  "en configuración" para dar de alta a un transportista antes que a su adaptador.
 
 ---
 
@@ -627,11 +876,15 @@ Next.js, App Router. Sin maquetar: la estética no puntúa, la legibilidad sí.
                                  "de 5.000 eventos: 4.987 ok, 13 en cuarentena — ver por qué"
 ```
 
-Cuatro pantallas. La 1 y la 2 son el encargo literal; la 3 es lo que hace que el sistema
-sobreviva a enero sin desarrollo; la 4 es lo que hace que un fallo sea visible en vez de
-silencioso.
+Cuatro pantallas. La 1 y la 2 son el encargo literal; la 3 es donde se resuelve sin
+desarrollo el incidente frecuente —un estado que nadie había visto—; la 4 es lo que hace
+que un fallo sea visible en vez de silencioso.
 
 ### Detalle de `/transportistas` (el apartado del ejemplo)
+
+Con la decisión A+, esta pantalla gestiona **vocabulario, no mapeo**. Es más modesta que la
+que se imaginó al principio y sigue siendo una pantalla viva: es donde se resuelve el
+incidente frecuente sin llamar a nadie.
 
 **Listado:**
 
@@ -639,94 +892,82 @@ silencioso.
 ┌───────────────────────────────────────────────────────────────────────┐
 │  Transportistas                              [ + Nuevo transportista ]│
 ├───────────────────────────────────────────────────────────────────────┤
-│  Nombre           Estrategia    Activo   Eventos hoy   Cuarentena     │
+│  Nombre           Adaptador          Estado    Hoy      Cuarentena    │
 │ ──────────────────────────────────────────────────────────────────────│
-│  Andes Express    declarativo    Sí        4.812           0      [✎] │
-│  TransBolívar     declarativo    Sí        5.000          13  ⚠   [✎] │
-│  RutaSur          declarativo    Sí        3.907           0      [✎] │
+│  Andes Express    andes-express.ts   Activo    4.812        0     [✎] │
+│  TransBolívar     transbolivar.ts    Activo    5.000       13  ⚠  [✎] │
+│  RutaSur          ruta-sur.ts        Activo    3.907        0     [✎] │
+│  Llanos Express   — sin adaptador    En conf.  1.119    1.119  ⚙  [✎] │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-La columna *Cuarentena* con el aviso es lo que convierte esta pantalla en algo que alguien
-mira, y no en un CRUD muerto. Enlaza directamente al motivo del rechazo.
+Dos columnas hacen el trabajo. **Cuarentena** convierte esto en algo que alguien mira, y no
+en un CRUD muerto: enlaza directamente al motivo del rechazo. **Adaptador** dice la verdad
+sobre dónde vive la gramática de cada uno, para que nadie busque en el panel algo que está
+en el repositorio.
 
-**Formulario de alta / edición** — cuatro secciones en la misma página, no un asistente
-por pasos (menos clics para quien ya sabe lo que hace):
+La cuarta fila es el **estado "en configuración"**: un transportista dado de alta *antes* de
+que exista su adaptador. Sus lotes entran y se guardan en crudo, no se normaliza nada y todo
+va a cuarentena. Sirve para que la ingesta pueda empezar el día que ellos estén listos, no
+el día que nosotros lo estemos, y para que al desplegar el adaptador se reprocese todo lo
+acumulado sin haber perdido un evento.
+
+**Ficha del transportista** — tres bloques, todos de vocabulario:
 
 ```
 ┌── 1 · Identidad ─────────────────────────────────────────────────────┐
 │  Nombre        [ RutaSur                    ]                        │
-│  Identificador [ ruta-sur ]  (se usa en la URL de ingesta, inmutable)│
-│  Activo        [x]   ← desactivar NO borra: deja de aceptar lotes    │
-│  Estrategia    ( • ) Declarativa   ( ) Manejador propio en código    │
+│  Identificador   ruta-sur     (va en la URL de ingesta, inmutable)   │
+│  Adaptador       ruta-sur.adapter.ts        ← vive en el repositorio │
+│  Estado        ( • ) Activo  ( ) Inactivo  ( ) En configuración      │
+│                  Inactivo NO borra: deja de aceptar lotes.           │
 └──────────────────────────────────────────────────────────────────────┘
 
-┌── 2 · Mapeo de campos ───────────────────────────────────────────────┐
-│  Campo canónico      Ruta en el payload recibido                     │
-│  Guía            *   [ guia                ]                         │
-│  Estado          *   [ estado              ]                         │
-│  Fecha           *   [ fecha               ]                         │
-│  Ciudad              [ lugar               ]                         │
-│  País                [                     ]  (RutaSur no lo manda)  │
+┌── 2 · Reloj del transportista ───────────────────────────────────────┐
+│  Zona horaria  [ America/Caracas (UTC−4) ▾ ]                         │
+│  Nota          [ RutaSur no envía zona horaria. Se dedujo compa-  ]  │
+│                [ rando AC-4471 con Andes Express: su 10:22 son    ]  │
+│                [ las 14:22 UTC → UTC−4, huso venezolano. Sella    ]  │
+│                [ con su propio reloj aunque el paquete esté en CO.]  │
 │                                                                      │
-│  Se admite notación de punto: location.city                          │
-│  Los campos no mapeados se ignoran (frase 06 del cliente).           │
+│  ⚠ Si se cambia, los eventos ya guardados NO se recalculan solos.    │
+│    Hay que reprocesar.                                               │
 └──────────────────────────────────────────────────────────────────────┘
 
-┌── 3 · Fechas y zona horaria ─────────────────────────────────────────┐
-│  Formato   ( ) ISO-8601   ( ) epoch en segundos   ( • ) patrón       │
-│  Patrón    [ DD/MM/YYYY HH:mm ]                                      │
-│  Zona      [ America/Caracas (UTC−4) ▾ ]                             │
-│                                                                      │
-│  ⚠ Este transportista no envía zona horaria. La que se elija aquí se │
-│    aplica a todos sus eventos. Si se cambia, los eventos ya          │
-│    guardados NO se recalculan solos: hay que reprocesar.             │
-└──────────────────────────────────────────────────────────────────────┘
-
-┌── 4 · Diccionario de estados ────────────────────────────────────────┐
-│  Valor recibido        Estado canónico de Andina                     │
-│  [ Recogido        ]   [ recogido      ▾ ]              [ eliminar ] │
-│  [ EnRuta          ]   [ en tránsito   ▾ ]              [ eliminar ] │
-│  [ Repartiendo     ]   [ en reparto    ▾ ]              [ eliminar ] │
-│  [ Entregado       ]   [ entregado     ▾ ]              [ eliminar ] │
-│  [                 ]   [               ▾ ]              [ añadir   ] │
+┌── 3 · Diccionario de estados ────────────────────────────────────────┐
+│  Valor recibido      Visto     Estado canónico de Andina             │
+│  Recogido              412     [ recogido       ▾ ]      [ eliminar ]│
+│  EnRuta              1.089     [ en tránsito    ▾ ]      [ eliminar ]│
+│  Repartiendo           377     [ en reparto     ▾ ]      [ eliminar ]│
+│  Entregado             341     [ entregado      ▾ ]      [ eliminar ]│
+│  Incidencia             28     [ incidencia     ▾ ]      [ eliminar ]│
+│  ─────────────────────────────────────────────────────────────────── │
+│  EnRutaLocal             9     [  ← sin asignar   ]  ⚠   [ asignar  ]│
 │                                                                      │
 │  Si llega un valor no listado:                                       │
 │    ( • ) enviar a cuarentena    ( ) ignorar el evento                │
-└──────────────────────────────────────────────────────────────────────┘
-
-┌── Probar antes de guardar ───────────────────────────────────────────┐
-│  Pega aquí un evento de ejemplo:                                     │
-│  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ { "guia": "AC-4471", "estado": "EnRuta",                       │  │
-│  │   "fecha": "30/08/2026 10:22", "lugar": "Cúcuta" }             │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-│                                                    [ Probar mapeo ]  │
 │                                                                      │
-│  Resultado:                                                          │
-│    guía        AC-4471                                               │
-│    estado      en tránsito        ← desde "EnRuta"                   │
-│    ocurrió     2026-08-30 14:22 UTC   (10:22 local, UTC−4)           │
-│    precisión   minuto             ← el origen no manda segundos      │
-│    ciudad      Cúcuta                                                │
-│    país        —                                                     │
-│                                                                      │
-│                                     [ Cancelar ]  [ Guardar perfil ] │
+│                    [ Cancelar ]  [ Guardar ]  [ Guardar y reprocesar ]│
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-Tres decisiones incrustadas en este formulario que conviene notar:
+Cuatro decisiones incrustadas en esta pantalla:
 
-1. **"Probar mapeo" no es un extra, es lo que hace segura la opción B/C.** Sin vista previa,
-   dar de alta un transportista es rellenar un formulario a ciegas y rezar. Con ella, el
-   error se ve antes de que entre el primer lote.
-2. **Desactivar en vez de borrar.** Un transportista con eventos históricos no se puede
+1. **La columna "Visto" y las filas sin asignar salen del tráfico real.** El sistema
+   precarga los valores que de verdad han llegado, con su contador, en vez de esperar a que
+   alguien los adivine. La fila `EnRutaLocal` con 9 apariciones y sin traducción es un
+   incidente detectado antes de que nadie llame por teléfono. Es posible porque se guarda
+   el `raw` de todo.
+2. **"Guardar y reprocesar" es la acción que cierra el bucle.** Añades la traducción que
+   faltaba y los eventos que estaban en cuarentena entran normalizados. Sin ella, arreglar
+   el diccionario dejaría el pasado roto.
+3. **Desactivar en vez de borrar.** Un transportista con eventos históricos no se puede
    eliminar sin dejar huérfana la línea de tiempo de envíos reales. El botón "eliminar"
-   solo aparece si el perfil no tiene ningún evento asociado; en el resto de casos, la
-   acción disponible es desactivar.
-3. **El aviso de la zona horaria dice la verdad incómoda:** cambiar la configuración no
-   reescribe el pasado. Decirlo en la pantalla evita la llamada de "cambié la zona y los
-   envíos viejos siguen mal".
+   solo aparece si no tiene ningún evento asociado.
+4. **Lo que NO se puede editar aquí está a la vista, no escondido.** El identificador y el
+   adaptador se muestran en gris. Quien busque cómo cambiar el mapeo de campos ve
+   inmediatamente que eso vive en el código, en vez de perder diez minutos buscando una
+   pestaña que no existe.
 
 ### Qué queda por diseñar de la pantalla
 

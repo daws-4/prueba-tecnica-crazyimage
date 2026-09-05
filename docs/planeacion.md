@@ -18,5 +18,7 @@ Después de ti, **el código lo mantendrá un equipo de dos personas que no part
 
 ## ** Cómo se manejarán los distintos formatos de datos que envía cada transportista y cómo se abordará el ingreso cuarto? **
 
-- 1 
+- 1 un adaptador en código por transportista
+- 2 vocabulario configurable por el operador para datos extra
+- 3 el cuarto transportista cuesta una sesión de desarrollo de un programador para poder integrarlo de la forma más optima
 
