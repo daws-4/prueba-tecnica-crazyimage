@@ -15,6 +15,12 @@ contexto.
 | # | Pregunta | Estado |
 |---|---|---|
 | P01 | Los tres formatos de entrada y cómo entra el cuarto transportista | **Cerrada — decisión: A+** |
+| P02 | Dónde vive el histórico: Postgres, Mongo o las dos | **Cerrada — MongoDB sola** |
+| P03 | Qué es «el mismo evento» y en qué instante ocurrió | **Cerrada — clave natural de 4 campos, UTC−4, truncado al minuto** |
+| P04 | Cómo comparten los tipos el panel y el API | **Cerrada — paquete interno con Zod, tipo derivado** |
+| P05 | Espacio de trabajo y entorno de ejecución | **Cerrada — npm workspaces + compose de dos servicios** |
+| P06 | Semántica del endpoint de ingesta | **Cerrada — síncrono, 200 con informe** |
+| P07 | Lo que apareció al escribir las pruebas de normalización | Notas, no decisión |
 
 ---
 
@@ -975,3 +981,749 @@ Cuatro decisiones incrustadas en esta pantalla:
   de mayor `occurredAt` y no del último recibido (frase 05 — la trampa).
 - `/`: qué filtro exacto se ofrece y cómo se pagina.
 - Estrategia de fetching y refresco (punto abierto del encuadre).
+
+---
+
+## P02 · Dónde vive el histórico: Postgres, Mongo o las dos
+
+### 2.1 Qué pidió el cliente y qué significa realmente
+
+> Frase 03: *«Usen Postgres y Mongo, que las dos ya están contratadas en el proyecto.»*
+
+No es una instrucción de arquitectura, es una frase de comprador: **«ya pago dos facturas, no
+me traigas una tercera»**. Le da igual el reparto. El encuadre de la prueba lo marca como
+*trampa amable*: usar una, la otra o las dos puede ser correcto **si viene con su argumento**.
+
+Lo que sí es cierto —y hay que reconocerlo antes de descartarlo— es que **las dos se pueden
+usar a la vez**, y hay dos repartos que son patrones reconocibles, no inventos:
+
+| Reparto | Cómo funciona | Nombre habitual |
+|---|---|---|
+| Mongo aterriza, Postgres canoniza | el lote entra crudo en Mongo; un proceso posterior normaliza y escribe en Postgres, de donde lee el panel | *raw landing zone* / staging |
+| Mongo escribe, Postgres lee | la ingesta escribe en Mongo y se proyecta a Postgres para consultas e informes | CQRS |
+
+Los dos funcionan. Los dos añaden **exactamente el mismo problema**: la ingesta deja de ser
+una escritura atómica. Existe el instante en que el evento está guardado en un motor y el
+estado del envío todavía no se ha actualizado en el otro. Resolverlo bien exige *outbox*,
+reintentos idempotentes y un reconciliador que detecte divergencias — más código que todo el
+resto de la entrega, heredado por un equipo de dos personas que no estuvo en esta fase.
+
+### 2.2 Por qué Mongo y no Postgres, con argumentos de este dominio
+
+No «por simplicidad». Cuatro anclajes concretos:
+
+**a) El crudo no es un extra, es un requisito de disponibilidad — y el crudo es un documento.**
+Los transportistas **empujan** y no hay forma de pedírselos. Si guardas solo lo normalizado y
+tres semanas después aparece un fallo en el adaptador de RutaSur, esos datos no se recuperan:
+no hay a quién reclamárselos. Y ese payload tiene hoy tres formas, en enero cuatro, con la
+instrucción explícita de ignorar campos desconocidos. Es la definición de documento sin
+esquema fijo. En Postgres acabaría en una columna `JSONB`, es decir, una carcasa relacional
+alrededor de un documento.
+
+**b) La lectura es «traer un agregado», no «cruzar tablas».**
+La pantalla de Camila es: una guía → su envío y su línea de tiempo. No hay joins entre cinco
+entidades ni informes con agrupaciones arbitrarias. Las virtudes caras de Postgres
+(integridad referencial entre muchas tablas, joins complejos, SQL analítico) apenas se usan
+en un dominio de dos entidades con una sola forma de consulta. Se paga la rigidez sin cobrar
+el beneficio.
+
+**c) La escritura por lotes encaja con la primitiva del motor.**
+Cinco mil eventos de golpe. `bulkWrite` con `ordered: false` hace en un viaje lo necesario:
+inserta todo lo válido, **no aborta por un evento malo**, y devuelve la lista de fallos con su
+índice y su motivo — que es, literalmente, el informe de descartes y la cuarentena, sin código
+extra. El equivalente en Postgres existe (`INSERT ... ON CONFLICT DO NOTHING` multi-fila) y es
+válido, pero el reporte por elemento hay que construirlo.
+
+**d) El estado actual desordenado se resuelve con atomicidad de un solo documento.**
+La frase 05 es una trampa: los lotes llegan tarde y desordenados, el último en llegar no es el
+más reciente. La solución es una actualización condicional y monótona —*actualiza el envío
+solo si el evento que traigo es posterior al último registrado*— y Mongo garantiza atomicidad
+a nivel de documento sin transacción. Dos lotes concurrentes no pueden hacer retroceder el
+estado. **La consistencia que importa aquí es intra-documento, no inter-tabla**, que es
+justamente la que el segundo motor no aporta.
+
+### 2.3 El modelo, con las dos trampas de Mongo evitadas
+
+Dos colecciones:
+
+| Colección | Un documento por | Contiene |
+|---|---|---|
+| `events` | evento normalizado | núcleo canónico + `raw` + `dedupKey` + contadores |
+| `shipments` | guía | estado actual derivado, `lastEventAt`, transportistas implicados |
+
+- **Los eventos NO van embebidos dentro del envío.** Tentador y erróneo: la lista crece sin
+  techo, cada evento reescribiría el documento entero y hay un límite duro de 16 MB.
+- **`shipments` no es tabla maestra: es una proyección derivada de `events`**, reconstruible
+  entera en cualquier momento. Esto desarma de un plumazo la objeción «Mongo no tiene
+  integridad referencial»: no hay una relación que mantener, hay una vista materializada que
+  se regenera. Existe solo para que el **listado** pueda filtrar por estado actual, cosa
+  carísima desde la colección de eventos. El **detalle** de una guía no la necesita.
+
+Índices:
+
+| Índice | Para qué |
+|---|---|
+| `{ trackingNumber: 1, occurredAt: -1 }` en `events` | línea de tiempo ordenada y estado actual, con la misma estructura |
+| `{ dedupKey: 1 }` único en `events` | idempotencia (ver P03) |
+| `{ currentStatus: 1, lastEventAt: -1 }` en `shipments` | el listado paginado y su filtro |
+
+### 2.4 Los números, sin exagerar
+
+**El volumen no es el argumento y conviene decirlo antes de que lo diga el evaluador.** Un
+evento normalizado con su crudo ronda los 700 bytes:
+
+| Escenario | Eventos | Tamaño aprox. |
+|---|---|---|
+| 2 M de eventos (≈33 días con los 4 transportistas) | 2 000 000 | ~1,4 GB |
+| Un año con 4 transportistas | ~22 000 000 | ~15 GB |
+
+Ninguno de los dos motores se inmuta con eso. Afirmar «elegí Mongo porque escala mejor» a
+estas cifras es regalarle el argumento a quien corrige.
+
+### 2.5 Borrador para DECISIONS.md — *reescribir con palabras propias*
+
+**Situación.** El cliente pidió usar Postgres y Mongo porque las dos ya están contratadas. Hay
+que decidir dónde vive el histórico de envíos: lotes de hasta cinco mil eventos, tres veces al
+día por transportista, cada uno con su formato, más el payload crudo, que hay que conservar
+íntegro porque los transportistas empujan y no hay forma de volver a pedírselo. Y la pantalla
+de Camila necesita, dada una guía, el estado actual y la línea de tiempo completa.
+
+**Decisión.** Un solo motor, MongoDB, con dos colecciones. `events` guarda un documento por
+evento normalizado con su payload crudo dentro; `shipments` guarda uno por guía con el estado
+actual ya calculado. `shipments` no es la tabla maestra: es una proyección derivada de
+`events`, reconstruible entera en cualquier momento. Postgres no sale del proyecto, sale de
+este servicio.
+
+**Alternativas descartadas.** *Postgres sola:* funciona perfectamente —`JSONB` para el crudo,
+índice único para deduplicar, particionado por fecha— pero acaba siendo una carcasa relacional
+alrededor de un documento, y las virtudes que se pagan con ella apenas se usan en un dominio
+de dos entidades con una sola forma de consulta. *Las dos, con reparto* (crudo en Mongo y
+canónico en Postgres, o escritura en una y lectura en la otra): son patrones conocidos y
+funcionan, pero convierten cada ingesta en una escritura que deja de ser atómica —existe el
+instante en que el evento está guardado en un motor y el estado del envío aún no en el otro—.
+Hacerlo bien exige *outbox*, reintentos y un reconciliador: más código que todo el resto de la
+entrega, heredado por dos personas que no estuvieron aquí. *Embeber la línea de tiempo dentro
+del documento del envío:* descartada porque la lista crece sin techo, cada evento reescribiría
+el documento entero y hay un límite duro de 16 MB.
+
+**Qué sacrifiqué.** Las consultas analíticas: «cuántos envíos pasaron de 48 horas, por
+transportista y por mes» es una frase en SQL y aquí es un *pipeline* de agregación más largo y
+menos legible para quien herede esto; si Andina quiere informes habrá que exportar, y ahí es
+donde Postgres, que ya está contratada, encuentra su sitio. Sacrifiqué también la red del
+motor: Postgres rechazaría una fila mal formada y Mongo la acepta, así que la validación en el
+borde deja de ser buena práctica y pasa a ser la única defensa. Y toda la idempotencia queda
+colgando de un índice único bien elegido: si esa clave está mal definida, no hay nada debajo.
+
+**Qué rompe esto a escala 100×.** El volumen no, y conviene decirlo: dos millones de eventos
+son unos 1,4 GB y un año entero con los cuatro transportistas ronda los 15 GB; ninguno de los
+dos motores se inmuta. Buscar una guía cuesta lo mismo con veinte mil eventos que con dos
+millones porque el índice por guía y fecha descendente sirve la línea de tiempo y el estado
+actual con la misma estructura. Lo que de verdad crece es el crudo, al mismo ritmo que los
+eventos y casi sin leerse nunca: primer candidato a archivarse por antigüedad. Si algún día
+hubiera que repartir en varias máquinas, la clave natural es el número de guía, que es a la
+vez la clave de consulta y el prefijo de la clave de deduplicación, de modo que todas las
+lecturas de un envío caen en un solo nodo; la restricción que eso impone, y queda escrita, es
+que el índice único de deduplicación tiene que empezar por el número de guía. Lo que sí
+rompería esta decisión no es el tamaño, es la forma: el día que el dominio deje de tener dos
+entidades y aparezcan clientes, facturas, acuerdos de nivel de servicio y correcciones
+auditadas cruzándose entre sí, esto se revisa.
+
+**Qué haría con una semana más.** Réplica y copias de seguridad con restauración probada —una
+copia que nunca se ha restaurado no es una copia—. Un validador de esquema en la propia
+colección, como segunda barrera detrás de la validación en el borde, para devolverle al motor
+parte de la red que le quité. Y la exportación a Postgres para informes, que cierra el círculo
+con lo que el cliente ya está pagando.
+
+**La traducción para el cliente.**
+
+> «Las dos están contratadas» habla del coste de licencia, no del coste de uso: lo caro de una
+> base de datos no es contratarla, es operarla. Y partir el histórico entre dos motores le
+> añade un modo de fallo nuevo a lo único que existe para que Camila deje de dar respuestas
+> equivocadas. Hoy tiene tres fuentes que no coinciden; no le voy a entregar una pantalla con
+> dos fuentes internas que tampoco.
+
+### 2.6 Efecto sobre los puntos abiertos
+
+- Cierra el punto 1 del encuadre (Postgres, Mongo o ambas) → **Mongo sola**.
+- Fija el modelo de datos que usarán P03 (identidad del evento) y P04 (estado derivado).
+
+---
+
+## P03 · Qué es «el mismo evento» y en qué instante ocurrió
+
+### 3.1 La raíz: ninguno de los tres manda un identificador de evento
+
+Ninguno de los tres formatos trae un `event_id`. Solo mandan el número de guía, que identifica
+el **envío**, no el **evento**.
+
+Por eso la frase 04 del cliente —*«a veces reenvían los mismos eventos, pero eso no pasa nada,
+¿verdad?»*— no es una pregunta, es un encargo: **hay que fabricar la identidad de cada evento
+a partir de su contenido**. Y en cuanto la identidad se calcula del contenido, cualquier campo
+que entre en el cálculo se vuelve crítico: si se interpreta mal, el mismo evento produce dos
+identidades y entra dos veces.
+
+Uno de esos campos es la fecha. Y la fecha de RutaSur no se sabe interpretar. **Por eso el huso
+y la clave de deduplicación son un solo problema**: el huso decide el instante, el instante
+forma parte de la identidad, y la identidad decide qué es un duplicado.
+
+### 3.2 El huso de RutaSur: la evidencia y lo poco que vale
+
+RutaSur manda `30/08/2026 10:22`. Sin zona, sin desplazamiento y sin segundos.
+
+La única pista es que el enunciado presenta los tres ejemplos como **el mismo envío en la misma
+ciudad**. Andes lo sitúa en `14:22:10Z`. Con hora de Venezuela (UTC−4), `10:22` es `14:22Z` y
+cuadra; con hora de Colombia (UTC−5) sería `15:22Z` y no cuadra.
+
+**Asunción adoptada: RutaSur informa en UTC−4, el reloj de Venezuela.**
+
+Dos matices que hay que dejar escritos:
+
+1. **Es una inferencia sobre una sola muestra.** Un ejemplo que encaja no es una prueba; es la
+   mejor evidencia disponible y nada más. Por eso la asunción es **configuración por
+   transportista**, no una constante en el adaptador — vive donde el vocabulario de estados
+   (§1.6).
+2. **El reloj es el del transportista, no el del lugar del evento.** Cúcuta está en Colombia
+   (UTC−5), en la frontera. Si RutaSur sellara «hora local del lugar», `10:22` allí sería
+   `15:22Z` y no cuadraría. Como cuadra con −4, la lectura es que sella con su propio reloj
+   fijo mire donde mire el paquete. Eso abarata la solución: una constante por transportista en
+   vez de una tabla de ciudades a zonas horarias. Y como ni Colombia ni Venezuela aplican
+   horario de verano, el desplazamiento no cambia en todo el año: la conversión es total, sin
+   horas repetidas ni horas inexistentes.
+
+### 3.3 Por qué importa: tres daños, de menor a mayor
+
+**Daño 1 — la línea de tiempo se desordena.** Con cuatro o cinco horas de desvío, los eventos
+de RutaSur se intercalan mal con los de los otros dos. Camila puede ver «en reparto» antes que
+«recogido». Feo y confuso, pero visible.
+
+**Daño 2 — el estado actual miente. Este es el caro.** Basta una hora de error:
+
+> **Verdad (RutaSur es −4):** «en reparto» a las 10:22 → `14:22Z`. Andes: «entregado» a las
+> `15:00Z`. Estado actual correcto: **entregado**.
+>
+> **Con la asunción equivocada (−5):** el evento de RutaSur se guarda como `15:22Z` y pasa a
+> ser el más reciente. Estado actual: **en reparto**.
+
+El paquete se entregó hace cuarenta minutos y la pantalla dice que va en camino. No es un fallo
+de visualización: es **exactamente la respuesta equivocada que este proyecto existe para
+eliminar**. Y ocurre en el momento de más riesgo, el traspaso entre transportistas, cuando dos
+reportan el mismo envío con pocos minutos de diferencia.
+
+**Daño 3 — la asunción queda cocida dentro de la clave.** Como el instante forma parte de la
+identidad, todos los eventos históricos de RutaSur llevan dentro el desplazamiento usado el día
+que entraron. Cambiar la configuración **no arregla lo ya guardado**: el mismo evento reenviado
+después del cambio genera otra identidad y se almacena duplicado. Corregir el huso no es un
+interruptor, es una migración —recalcular fecha y clave de todos los eventos de RutaSur y
+volver a deduplicar—. Con 2 M de eventos, un tercio suyos, son unos 600 000 documentos.
+
+Dos mitigaciones, las dos baratas:
+
+- **El crudo lo hace reversible.** Se puede recalcular porque la cadena `"30/08/2026 10:22"`
+  original sigue guardada. Sin el crudo habría que deshacer una conversión a ciegas.
+- **La asunción viaja con el dato.** Cada evento guarda el desplazamiento que se usó para
+  calcularlo (`sourceOffset`). Así se sabe qué eventos se computaron bajo qué asunción, la
+  migración ataca solo a los afectados y nadie tiene que adivinar.
+
+### 3.4 Las cinco preguntas abiertas y sus respuestas
+
+| # | Pregunta | Decisión | Motivo en una línea |
+|---|---|---|---|
+| 1 | ¿Truncar al minuto o conservar segundos? | **Truncar al minuto** | Unos segundos no cambian una operación de miles de eventos al día, y truncar mide a los tres con la misma regla. |
+| 2 | ¿El lugar entra en la clave? | **No** | Texto libre, conjunto abierto, sin forma canónica: la identidad sería tan estable como la ortografía del transportista. |
+| 3 | ¿Cómo se desempata a igualdad de instante? | **Gana el que llegó después** | A falta de mejor información, el reporte más reciente es el conocimiento más actual; y es determinista. |
+| 4 | ¿Qué se hace con el duplicado? | **Contarlo** | Sale gratis: la misma escritura que deduplica incrementa el contador. |
+| 5 | Umbrales de cordura | **+15 min al futuro, 90 días al pasado** | Ver §3.6. |
+
+**Sobre truncar, una precisión importante:** truncar **no elimina** los empates, los hace
+explícitos. Hoy Andes a las `14:22:10` y RutaSur a las `14:22:00` no empatan, pero RutaSur
+pierde por un artefacto de su granularidad, no porque ocurriera antes. Al truncar, los dos caen
+en `14:22:00` y el empate sale a la luz, donde lo resuelve una regla escrita. Las decisiones 1
+y 3 son la misma decisión partida en dos: una hace visible el problema y la otra lo resuelve.
+
+Y truncar **no tira el dato**: `occurredAt` queda truncado (es el campo canónico, indexado y
+parte de la clave) y el instante exacto tal como llegó se conserva aparte en `occurredAtExact`.
+Lo que se sacrifica es el segundo **como criterio de orden y de identidad**, no como
+información.
+
+Beneficio lateral de truncar que no estaba previsto: absorbe el temblor de los reenvíos. Un
+transportista que regenera la marca de tiempo al reenviar y la mueve un par de segundos
+produciría hoy un duplicado; truncado al minuto, no.
+
+### 3.5 La clave, definida
+
+**Descartada: el hash del payload crudo.** Es lo primero que se le ocurre a cualquiera y lo
+mata la propia frase 06 del cliente (*«si viene algún campo raro que no conocemos, ignórenlo y
+sigan»*): si el transportista reenvía el mismo evento con un campo nuevo, otro orden de claves
+o un espacio de más, el hash cambia y entra un duplicado. La identidad no puede depender de la
+forma del envoltorio, precisamente porque han avisado de que el envoltorio va a cambiar.
+
+**Criterio adoptado:** *solo entran en la identidad los campos cuya normalización es
+determinista y de conjunto cerrado.*
+
+```
+dedupKey = carrier | trackingNumber | occurredAt(truncado al minuto, UTC) | status
+```
+
+| Campo | ¿Entra? | Por qué |
+|---|---|---|
+| `carrier` | **sí** | Ver abajo: dos fuentes coincidiendo no son un duplicado. |
+| `trackingNumber` | **sí, y primero** | Identificador, y prefijo del futuro reparto horizontal (§2.5). |
+| `occurredAt` truncado | **sí** | Conjunto cerrado tras la normalización: un número. |
+| `status` canónico | **sí** | Conjunto cerrado de cinco valores. |
+| `location` | **no** | Texto libre y abierto: `Cúcuta`, `CUCUTA`, `Cucuta, Norte de Santander`. |
+| `raw` completo | **no** | Frase 06: el envoltorio cambia sin avisar. |
+
+**Por qué `carrier` va dentro, que es lo menos obvio.** El enunciado dice que los tres reportan
+**el mismo envío**. Puede pasar que Andes y RutaSur informen el mismo hecho, en la misma
+ciudad, en el mismo instante. Eso **no es un duplicado**: son dos fuentes independientes
+coincidiendo, y la procedencia es información, no ruido. Deduplicar entre transportistas
+significaría que un fallo de reloj en uno silencia el evento real de otro, y una vez fusionado
+no hay vuelta atrás. Además, la idempotencia que pide el cliente es contra **reenvíos del mismo
+transportista**, que es otro fenómeno. Si en pantalla queda ruidoso, se agrupa visualmente
+(«reportado por Andes y RutaSur»): **se deduplica en el almacenamiento por origen, se agrupa en
+la presentación.**
+
+**La escritura que deduplica y cuenta a la vez.** Un solo `bulkWrite` con `ordered: false`
+resuelve el lote entero:
+
+```ts
+{ updateOne: {
+    filter: { dedupKey },
+    update: {
+      $setOnInsert: { ...evento canónico, receivedAt },
+      $inc:         { timesReceived: 1 },
+      $set:         { lastReceivedAt },
+    },
+    upsert: true,
+}}
+```
+
+De ahí salen los contadores del lote sin escribir una línea más: `upsertedCount` son los nuevos
+y `modifiedCount` los duplicados. Es la respuesta a la pregunta 4 y deja encaminado el opcional
+de métricas de ingesta sin haberlo perseguido.
+
+*Detalle honesto:* con índice único y `upsert` concurrente existe la carrera clásica que
+devuelve `E11000`; ese documento se reintenta una vez y ya está. No es un caso teórico con tres
+lotes de cinco mil llegando a la vez.
+
+### 3.6 Los umbrales de cordura
+
+La inconsistencia del enunciado —el epoch de TransBolívar cae en 2025 y no en 2026— deja de ser
+una curiosidad en cuanto se lee como comportamiento posible en producción: **un transportista
+con el reloj mal puesto**.
+
+| Umbral | Valor | Por qué |
+|---|---|---|
+| Futuro | **+15 min** sobre `receivedAt` del lote | Un evento no puede haber ocurrido después de que nos lo cuenten; los 15 min son margen para relojes desincronizados y latencia del lote. Apretado a propósito: **un evento futuro deja el estado del envío clavado para siempre**, porque ningún evento posterior podrá superarlo. |
+| Pasado | **90 días** antes de `receivedAt` del lote | Generoso porque un evento viejo no secuestra el estado actual, solo ensucia la línea de tiempo. Cubre de sobra un envío atascado en aduana o un transportista reenviando su atraso, y aun así atrapa el fallo del año, que está a 365 días. |
+
+- Se miden contra el `receivedAt` **del lote original**, no contra el reloj de ahora: si algún
+  día se reprocesa un lote de hace seis meses, medirlo contra hoy mandaría el lote entero a
+  cuarentena.
+- Al saltar: **cuarentena, nunca descarte silencioso** — la maquinaria de §1.6.
+- Son configuración por transportista, no constantes: viven donde la zona horaria.
+
+Y en la misma línea, el análisis de `30/08/2026` es **estricto y con formato declarado**.
+`new Date("30/08/2026 10:22")` devuelve fecha inválida y `new Date("05/08/2026")` devuelve el 8
+de mayo en vez del 5 de agosto: falla en silencio y con el día equivocado. Nada de análisis
+permisivo; lo que no encaje con el formato declarado va a cuarentena. (Coherente con §1.4: *el
+fallo peligroso no es el que falla, es el que funciona y miente*.)
+
+### 3.7 Los campos que esto añade al evento canónico
+
+| Campo | Para qué |
+|---|---|
+| `occurredAt` | instante truncado al minuto, en UTC. Canónico: ordena, indexa y forma la clave. |
+| `occurredAtExact` | instante tal como llegó, sin truncar. Informativo. |
+| `precision` | `'second' \| 'minute'` — de dónde venía la resolución (ya en §1.3). |
+| `sourceOffset` | el desplazamiento asumido al convertir (`'-04:00'`). Hace la migración dirigida. |
+| `receivedAt` | cuándo nos enteramos. Desempata, audita el retraso del transportista y ancla los umbrales. |
+| `dedupKey` | la identidad calculada. Índice único. |
+| `timesReceived` / `lastReceivedAt` | cuántas veces llegó y cuándo la última. |
+
+**Dos relojes por evento, no uno:** cuándo ocurrió y cuándo nos enteramos. Es la misma pareja
+que sostendrá la decisión sobre lotes desordenados (frase 05).
+
+### 3.8 La red que hace todo esto reversible
+
+> **La deduplicación decide qué es canónico, no qué se conserva.**
+
+Cada evento recibido se registra en crudo pase lo que pase, incluso los descartados por
+duplicados o por cuarentena. La clave solo gobierna la colección `events`, que es una
+proyección reconstruible. Con esa red debajo, equivocarse de clave o de huso deja de ser un
+error irreparable y pasa a ser un reproceso.
+
+### 3.9 Borrador para DECISIONS.md — *reescribir con palabras propias*
+
+**Situación.** El cliente da por hecho que reenviar los mismos eventos «no pasa nada». Sí pasa:
+ninguno de los tres transportistas manda un identificador de evento, solo el número de guía,
+que identifica el envío y no el evento. Hay que fabricar la identidad a partir del contenido. Y
+el contenido incluye una fecha que en el caso de RutaSur llega sin zona horaria y sin segundos,
+de modo que decidir la identidad y decidir el instante son el mismo problema.
+
+**Decisión.** La identidad de un evento es transportista + número de guía + instante truncado
+al minuto + estado canónico. RutaSur se interpreta en UTC−4, el reloj de Venezuela, porque es
+lo que hace cuadrar su ejemplo con el de Andes; la asunción es configuración por transportista
+y viaja guardada dentro de cada evento. Se trunca al minuto para medir a los tres con la misma
+regla, y a igualdad de instante gana el evento que llegó después. El duplicado no se descarta:
+se cuenta sobre el evento que ya existía.
+
+**Alternativas descartadas.** *Hash del payload crudo:* lo mata la propia instrucción del
+cliente de ignorar campos desconocidos — un campo nuevo, otro orden de claves o un espacio de
+más cambian el hash y meten un duplicado. *Meter el lugar en la clave:* es texto libre sin
+forma canónica (`Cúcuta`, `CUCUTA`, `Cucuta, Norte de Santander`), y una identidad solo es tan
+estable como el campo menos normalizable que contiene. *Deduplicar entre transportistas:* si
+dos informan el mismo hecho no es un duplicado, son dos fuentes coincidiendo; fusionarlas
+destruye la procedencia y permite que un fallo de reloj en uno silencie el evento real de otro.
+*Conservar los segundos:* mantendría la precisión de dos de los tres, pero dejaría a RutaSur
+compitiendo en desventaja permanente al ordenar, perdiendo empates por un artefacto de su
+granularidad y no porque ocurriera antes.
+
+**Qué sacrifiqué.** El segundo como criterio de orden: dos eventos del mismo minuto ya no se
+pueden ordenar por lo que dice la fuente, sino por una regla nuestra. El dato exacto se
+conserva aparte, pero deja de decidir. Sacrifiqué también la certeza sobre el huso: está
+apoyado en un solo ejemplo del enunciado, y como el instante forma parte de la identidad, esa
+asunción queda cocida dentro de la clave de todos los eventos de RutaSur ya guardados —
+corregirla no será un interruptor, será una migración. Y acepto ver duplicados aparentes en
+pantalla cuando dos transportistas reporten lo mismo, porque prefiero explicarlos a fusionarlos
+sin vuelta atrás.
+
+**Qué rompe esto a escala 100×.** Nada por volumen: la deduplicación es un índice único y una
+escritura por lotes, y cuesta lo mismo con veinte mil eventos que con dos millones. Lo que
+escala mal es el error: si el huso de RutaSur resulta ser otro, no se corrige con un cambio de
+configuración, hay que recalcular fecha y clave de unos 600 000 documentos y volver a
+deduplicar. Es un trabajo por lotes, no un despliegue. Se puede hacer porque el payload crudo
+sigue guardado y porque cada evento lleva escrito el desplazamiento con el que se calculó, así
+que la migración ataca solo a los afectados. Y con cuatro transportistas crece la probabilidad
+del caso que más ruido hace: varios reportando el mismo envío, lo que multiplica los empates de
+instante y hace que la regla de desempate deje de ser un detalle.
+
+**Qué haría con una semana más.** Una vigilancia del huso: para los envíos que reportan dos
+transportistas a la vez, comparar sistemáticamente el desfase entre sus reportes del mismo
+estado. Si la asunción de RutaSur está mal, ese desfase se agrupa alrededor de una hora exacta
+y salta a la vista sin esperar a que alguien se queje. Y escribiría las pruebas de esta pieza,
+que es la más frágil del sistema: los tres formatos, el cambio de huso, el minuto truncado, el
+reenvío con un campo extra y el evento fechado en el futuro.
+
+**La traducción para el cliente.**
+
+> Reenviar el mismo evento sí pasa algo, porque ninguno de los tres nos manda un identificador
+> de evento: nos toca deducir cuál es cuál por su contenido. Lo hemos resuelto, y de paso
+> contamos cuántas veces llega cada uno, que es información gratis sobre cómo se porta cada
+> transportista. Lo que no vamos a hacer es fusionar el reporte de Andes con el de RutaSur
+> cuando coincidan: que dos fuentes independientes digan lo mismo es una confirmación, y
+> borrarla sería tirar la única prueba de que el dato es bueno.
+
+### 3.10 Efecto sobre los puntos abiertos
+
+- Cierra el punto 5 (zona horaria asumida para RutaSur) → **UTC−4, configurable, guardada por
+  evento**.
+- Cierra el punto 7 (estrategia de deduplicación) → **clave natural de cuatro campos**.
+- Deja encaminado el opcional de métricas de ingesta sin comprometerse a desarrollarlo.
+
+---
+
+## P04 · Cómo comparten los tipos el panel y el API
+
+### 4.1 La frase que hay detrás
+
+> Frase 10: *«Que el panel y el API compartan los tipos, ya nos pasó de romper la pantalla al
+> cambiar algo por detrás.»*
+
+Lo que describe no es un problema de tipos, es un problema de **momento en que se descubre el
+fallo**. Alguien cambió el API, nadie tocó el panel, y el error apareció delante de Camila. Una
+solución que solo detecte el desajuste al compilar es media solución: si el panel se despliega
+por separado, compila perfectamente contra un contrato que el API ya no cumple.
+
+### 4.2 Las opciones
+
+| Opción | Cómo | Por qué no |
+|---|---|---|
+| **Copia manual** de interfaces | dos ficheros `types.ts`, uno a cada lado | Es exactamente el fallo que el cliente está contando. Divergen el día que alguien tiene prisa. |
+| **Generación desde OpenAPI** | el API publica el esquema, un generador escribe los tipos del panel | Funciona y es lo estándar en equipos grandes, pero mete un paso de generación y un artefacto que hay que regenerar y versionar. Para un equipo de dos personas es una pieza más que mantener y que se queda obsoleta en silencio. |
+| **tRPC o similar** | tipos extremo a extremo por inferencia | Acopla el panel al API a nivel de framework. El enunciado fija NestJS y Next.js; meter una tercera pieza que los case es más superficie que valor. |
+| **Paquete interno con esquema de Zod** ✅ | `@andina/contracts`: el esquema es la fuente y el tipo se deriva con `z.infer` | — |
+
+### 4.3 La decisión
+
+**Un paquete interno del espacio de trabajo, `@andina/contracts`, donde la fuente de verdad es
+un esquema de Zod y el tipo de TypeScript se deriva de él.**
+
+Dos propiedades, y la segunda es la que de verdad responde a la frase del cliente:
+
+1. **No pueden divergir.** No hay dos definiciones que sincronizar, hay una de la que sale la
+   otra. Escribir un tipo a mano al lado del esquema sería reintroducir el problema.
+2. **El contrato se comprueba en ejecución, no solo al compilar.** Un tipo de TypeScript se
+   evapora en `tsc`; el esquema sigue ahí cuando el API devuelve algo que no debía, y revienta
+   en el borde con un mensaje concreto en vez de dos capas más adelante con un `undefined` en
+   mitad de la pantalla.
+
+Eso segundo es, de paso, el opcional **«contrato verificable»** del enunciado. No se persigue
+como funcionalidad extra: sale de haber elegido bien la herramienta.
+
+### 4.4 Tres decisiones finas que salieron al escribirlo
+
+**a) El contrato NO incluye el cuerpo de la petición de ingesta.**
+Son dos fronteras distintas: panel ↔ API por un lado, transportista → API por otro. El payload
+que manda Andes Express es un contrato suyo, propio y distinto del de RutaSur, y lo valida su
+adaptador. Meterlo aquí obligaría al panel a conocer los tres formatos de entrada, que es
+literalmente lo que este proyecto existe para ocultar. Lo que sí viaja en el contrato es el
+**informe** de la ingesta, porque eso sí lo mira una persona.
+
+**b) El identificador de transportista es `string` abierto en el contrato, cerrado en el API.**
+El conjunto de transportistas con adaptador escrito es cerrado —vive donde viven los
+adaptadores— pero el panel no necesita conocerlo: recibe identificador y nombre para mostrar
+como datos. Consecuencia práctica: **dar de alta el cuarto transportista en enero no obliga a
+volver a desplegar el panel.** El conjunto que sí es cerrado y sí viaja son los cinco estados
+canónicos, porque la pantalla dibuja cinco y solo cinco.
+
+**c) Los cinco estados llevan valores en español.**
+El convenio del proyecto es código en inglés, y se mantiene para los identificadores. Pero
+`recogido`, `en_transito`, `en_reparto`, `incidencia` y `entregado` no son nombres de código:
+son el vocabulario del negocio, el mismo que usa Camila. Traducirlos a inglés para volver a
+traducirlos en pantalla añade una capa de mapeo que no resuelve nada y que es una fuente de
+fallos más.
+
+**d) Todo instante que cruza el cable es UTC con `Z` obligatoria.**
+No es un detalle de formato, es la decisión P03 escrita dentro del contrato: el esquema
+rechaza `2026-08-30T10:22:00-04:00` aunque sea el mismo instante. A partir del borde del API,
+los tres husos de entrada dejan de existir. Comprobado en ejecución:
+
+```
+UTC ok      -> true
+con -04:00  -> false
+estado raro -> false   ('EnRuta', el valor crudo de RutaSur)
+estado ok   -> true    ('en_transito')
+```
+
+### 4.5 Borrador para DECISIONS.md — *reescribir con palabras propias*
+
+**Situación.** El cliente cuenta que ya se les rompió la pantalla al cambiar algo por detrás, y
+pide que el panel y el API compartan los tipos. El problema real no es tener tipos, es que el
+desajuste aparezca delante de la persona que atiende al cliente en vez de delante de quien hizo
+el cambio.
+
+**Decisión.** Un paquete interno del espacio de trabajo con los esquemas de los datos que
+cruzan entre las dos capas, escritos con Zod, del que se derivan los tipos de TypeScript en vez
+de escribirlos aparte. El mismo esquema valida en el borde del API en tiempo de ejecución.
+
+**Alternativas descartadas.** *Copiar las interfaces a los dos lados:* es exactamente el fallo
+que el cliente está describiendo, y divergen el primer día que alguien tiene prisa. *Generar
+los tipos del panel desde la documentación del API:* funciona y es lo habitual en equipos
+grandes, pero añade un paso de generación y un artefacto versionado que se queda obsoleto en
+silencio; para dos personas es una pieza más que mantener. *Acoplar las dos capas con una
+librería de tipos extremo a extremo:* obligaría a meter una tercera pieza entre dos frameworks
+que el encargo ya fija.
+
+**Qué sacrifiqué.** Validar en ejecución cuesta tiempo de proceso en cada petición, y en la
+ingesta eso se multiplica por cinco mil. Es un coste medible y lo asumo porque el borde es
+justo donde quiero pagarlo. Sacrifiqué también algo de comodidad: el panel no puede inventarse
+campos "temporales" en una respuesta para salir del paso, porque el esquema los rechaza; a
+cambio, nadie descubre en producción que ese campo temporal se quedó tres meses.
+
+**Qué rompe esto a escala 100×.** No el número de eventos, sino el número de esquemas. Con
+cuatro transportistas y más pantallas, un paquete de contrato mal organizado se convierte en un
+cajón donde todo el mundo añade y nadie borra. Lo que hay que vigilar es la frontera: el
+contrato es lo que cruza entre el panel y el API, y no debe absorber ni los formatos de entrada
+de los transportistas ni la forma interna de los documentos guardados. Cada vez que uno de esos
+dos se cuele aquí, el panel empieza a conocer cosas que no le tocan.
+
+**Qué haría con una semana más.** Publicaría el esquema también como documentación del API
+generada desde el mismo sitio, para que un transportista nuevo no tenga que leer código para
+saber qué se le acepta. Y añadiría una comprobación automática que falle si una respuesta del
+API no valida contra su propio contrato, para que el desajuste se note en las pruebas y no en
+la primera petición real.
+
+### 4.6 Efecto sobre los puntos abiertos
+
+- Cierra el punto 3 (monorepo vs. dos proyectos) → **monorepo con espacios de trabajo de npm**.
+- Cierra el punto 4 (cómo se comparten los tipos) → **paquete interno con Zod, tipo derivado**.
+- Deja resuelto el opcional **«contrato verificable»** como efecto lateral, no como funcionalidad
+  perseguida.
+
+---
+
+## P05 · Espacio de trabajo y entorno de ejecución
+
+Estas dos no son material de `DECISIONS.md` —son organización, y van al `README`— pero se
+anotan aquí porque se tomaron durante el desarrollo y conviene que estén razonadas.
+
+### 5.1 Monorepo con espacios de trabajo de npm
+
+```
+proyecto/
+├── package.json          espacios de trabajo, sin herramienta extra
+├── tsconfig.base.json    strict + los cuatro extras que de verdad pillan fallos
+├── packages/
+│   └── contracts/        @andina/contracts — el contrato compartido
+└── apps/
+    ├── api/              NestJS
+    └── panel/            Next.js
+```
+
+**Espacios de trabajo de npm y no pnpm ni Turborepo.** El requisito de tipos compartidos obliga
+a monorepo; la herramienta para gestionarlo, no. npm viene con Node 22, no hay que instalar
+nada, no hay fichero de configuración que aprender y `npm install` en la raíz deja el proyecto
+listo. Con tres paquetes, lo que aporta una herramienta de construcción incremental es menos
+que lo que cuesta que dos personas nuevas la aprendan. Si el proyecto creciera a diez paquetes,
+la conversación cambia.
+
+**`strict` y cuatro comprobaciones más.** Además de `strict`, están activadas
+`noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride` y
+`noFallthroughCasesInSwitch`. Las dos primeras son las que de verdad importan aquí: la primera
+obliga a tratar el caso de que un índice no exista —que en un lote de cinco mil eventos pasa— y
+la segunda distingue *«el campo no vino»* de *«el campo vino vacío»*, que es exactamente la
+diferencia entre los tres transportistas con el `country`.
+
+### 5.2 Docker: dos servicios, no un contenedor
+
+La idea inicial era un único `Dockerfile` sobre `node:22` donde corrieran Mongo y la aplicación.
+Se descarta por tres motivos concretos:
+
+1. **`node:22-alpine` no puede ejecutar `mongod`**, que necesita glibc. Habría que irse a la
+   imagen Debian e instalar MongoDB por `apt` dentro, con lo que la imagen crece y la
+   construcción se vuelve frágil.
+2. **Dos procesos en un contenedor exigen un supervisor.** Sin él, si `mongod` muere el
+   contenedor sigue pareciendo sano y Docker no reinicia nada.
+3. **No se ahorra el volumen.** El requisito dice que los datos sobrevivan a un reinicio, así
+   que hace falta un volumen montado en `/data/db` igualmente. El contenedor único no evita
+   ninguna de las piezas, solo las esconde.
+
+**Decisión: `docker compose` con dos servicios** —la imagen oficial de Mongo y un `Dockerfile`
+sobre `node:22` para la aplicación—. Sigue siendo *un solo comando*, que es lo que pide el
+enunciado (y `docker compose up` es literalmente el ejemplo que da), y añade gratis volumen con
+nombre, comprobación de salud y política de reinicio.
+
+---
+
+## P06 · Semántica del endpoint de ingesta: síncrono o aceptado
+
+### 6.1 El presupuesto real
+
+Lotes de hasta cinco mil eventos, tres veces al día, por transportista. Con cuatro
+transportistas son doce peticiones al día y unos 60 000 eventos. **No es un sistema con carga
+continua: es un sistema que duerme y se despierta doce veces.** Dimensionarlo como si recibiera
+tráfico constante sería resolver un problema que no existe.
+
+Cuánto tarda de verdad un lote de cinco mil: normalizar es trabajo de CPU sobre objetos
+pequeños, y la escritura es un `bulkWrite` sin orden más otro para la proyección de envíos. El
+orden de magnitud es **por debajo de dos segundos**, no de dos minutos.
+
+### 6.2 Las dos opciones
+
+| | Síncrono (200 con el informe) | Aceptado (202 + proceso diferido) |
+|---|---|---|
+| Cuándo sabe el transportista qué pasó | en su propia respuesta | cuando consulte un endpoint de estado |
+| Infraestructura | ninguna | una cola: en memoria se pierde al reiniciar, persistida es una pieza más que mantener |
+| Consistencia para Camila | al responder, el dato ya se consulta | hay una ventana en la que el 202 ya se dio y el panel no lo refleja |
+| Riesgo | mantiene una conexión abierta unos segundos | el informe acaba en una pantalla que nadie mira |
+
+### 6.3 La decisión
+
+**Síncrono: `200` con el informe del lote.**
+
+El argumento decisivo no es el rendimiento, es una restricción del encargo que se olvida
+fácil: **a los transportistas no se les puede pedir nada.** No hay pull, no hay reintento que
+podamos provocar, no hay a quién llamar. Consecuencia: **el único momento garantizado en que
+vamos a tener su atención es mientras nos están hablando.** Un 202 aplaza el veredicto a un
+endpoint de estado que estos tres no van a consultar, y el desglose de descartes —que es la
+información que hace falta para arreglar la causa— acaba en un sitio que nadie abre.
+
+Y es una elección segura precisamente por la decisión anterior: si el cliente del transportista
+corta por tiempo de espera y reintenta el lote entero, **la clave de deduplicación hace que el
+reintento no cueste nada**. Las dos decisiones se sostienen la una a la otra: sin idempotencia,
+el endpoint síncrono sería temerario.
+
+Piezas que van con ella:
+
+- **Límite de tamaño de lote**, con `413` si se supera. Acota el tiempo de respuesta por diseño
+  en vez de confiar en que nadie mande cincuenta mil de golpe.
+- **Escritura por trozos**, no un `for` con una escritura por evento ni una transacción única
+  gigante: `bulkWrite` sin orden, en bloques, con éxito parcial.
+- **Códigos coherentes:** `200` aunque haya eventos en cuarentena, porque la cuarentena es un
+  resultado normal y no un fallo de la petición; `404` si el transportista no tiene adaptador;
+  `413` si el lote es demasiado grande; `400` solo si el sobre en sí es ilegible.
+
+### 6.4 Borrador para DECISIONS.md — *reescribir con palabras propias*
+
+**Situación.** Los transportistas mandan lotes de hasta cinco mil eventos tres veces al día y
+no hay forma de pedirles nada: ellos empujan y nosotros recibimos. Había que decidir si la
+petición espera a que el lote esté procesado o si se acepta y se responde después.
+
+**Decisión.** El endpoint procesa el lote y responde con el informe: cuántos entraron, cuántos
+eran reenvíos y cuántos quedaron en cuarentena, con el desglose de por qué. La escritura va por
+bloques con éxito parcial, nunca evento a evento ni en una transacción única.
+
+**Alternativas descartadas.** *Aceptar con un 202 y procesar después:* es lo que se hace cuando
+el trabajo es largo o la carga es continua, y aquí no es ninguna de las dos cosas —son doce
+lotes al día y cada uno se resuelve en un par de segundos—. Además obliga a una cola, que si
+vive en memoria se pierde al reiniciar y si se persiste es otra pieza que mantener. Pero lo que
+de verdad la descarta es que el informe de errores acabaría en un endpoint de estado que estos
+transportistas no van a consultar. *Procesar el lote en una sola transacción:* un evento malo
+tumbaría los otros cuatro mil novecientos noventa y nueve, que es justo lo contrario de lo que
+pide el cliente cuando dice que sigamos adelante con lo que no entendamos.
+
+**Qué sacrifiqué.** El transportista espera unos segundos en cada lote, y si algún día mandan
+lotes mucho mayores esa espera crece; por eso hay un límite de tamaño explícito, que es una
+restricción que les impongo. Sacrifiqué también la comodidad de absorber un pico: si los cuatro
+transportistas coincidieran a la misma hora, las peticiones compiten en vez de encolarse.
+
+**Qué rompe esto a escala 100×.** No los cinco mil eventos, sino el día que dejen de ser tres
+lotes al día. Si un transportista pasara a mandar continuamente, o si el volumen por lote se
+multiplicara, la respuesta síncrona empieza a rozar los tiempos de espera y toca dar el paso a
+aceptar y procesar aparte. Ese cambio es barato porque la pieza que normaliza y la que escribe
+no se enteran de por dónde entró el lote: lo que cambia es el controlador. Lo que sí habría que
+resolver ese día es dónde ve el transportista el resultado, que es el problema que hoy nos
+ahorramos.
+
+**Qué haría con una semana más.** Guardaría el informe de cada lote como un registro
+consultable, para poder responder «¿qué pasó con el envío de ayer a las tres?» sin buscar en
+los registros del servidor. Con eso, el opcional de métricas de ingesta queda hecho: los
+números ya se calculan, solo hay que dejar de tirarlos.
+
+### 6.5 Efecto sobre los puntos abiertos
+
+- Cierra el punto 6 (semántica del endpoint de ingesta) → **síncrono, 200 con informe**.
+
+---
+
+## P07 · Lo que apareció al escribir las pruebas de normalización
+
+Las pruebas están en `apps/api/src/normalization/normalizer.test.ts`. Trece casos, elegidos por
+los bordes que aparecieron leyendo los datos, no por cobertura. Tres cosas que salieron de
+escribirlas:
+
+### 7.1 El umbral del futuro delata el huso mal configurado
+
+No estaba previsto. Si se configura RutaSur como UTC−5 en vez de UTC−4, sus eventos aterrizan
+una hora más tarde de lo real; y cuando el lote llega fresco, ese desplazamiento los coloca
+**después del momento en que el transportista nos los contó**, que es imposible. El umbral de
+cordura salta.
+
+No es una red completa —un lote de la tarde, con horas de retraso, ya no lo detectaría— pero
+convierte un fallo silencioso en uno visible sin haber añadido una sola línea. Queda anotado
+como lo que es: un efecto lateral afortunado, no un mecanismo de detección en el que confiar.
+El mecanismo de verdad sería el que está en el «qué haría con una semana más» de la decisión de
+identidad: comparar sistemáticamente el desfase entre transportistas que reportan el mismo
+envío.
+
+### 7.2 El ejemplo de TransBolívar del enunciado no pasa
+
+`occurred_at: 1756563730` es `2025-08-30T14:22:10Z`. Frente a un lote recibido en agosto de
+2026, está a 365 días: fuera del umbral de 90, y por tanto en cuarentena con el motivo
+`date_out_of_bounds`. **Es el comportamiento correcto**, no un fallo: en producción eso sería
+un transportista con el reloj mal puesto, y se ve el mismo día en vez de aparecer como un
+evento fantasma un año atrás en la línea de tiempo de un envío real.
+
+Decisión sobre el seeder: los datos de ejemplo llevarán el epoch **corregido a 2026**, con el
+caso original incluido aparte como ejemplo de cuarentena. Así el sistema se ve con contenido
+real y además se ve funcionando la red.
+
+### 7.3 El tipo `RawInstant` es lo que hace imposible olvidar el huso
+
+Un adaptador no puede devolver una fecha ya resuelta: tiene que declarar de qué clase es su
+instante. El de RutaSur devuelve `localNaive`, que **por definición no se puede convertir sin un
+dato externo**, y el compilador obliga a aportarlo. Si el tipo hubiera sido `Date` a secas, ese
+`10:22` se habría convertido en algún punto con la zona del servidor y nadie se habría enterado
+hasta que Camila diera una respuesta equivocada. Es la aplicación concreta de §1.4: *el fallo
+peligroso no es el que falla, es el que funciona y miente*.
