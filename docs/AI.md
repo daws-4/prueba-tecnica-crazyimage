@@ -1,0 +1,6 @@
+# DOCUMENTO DE USO DE LA IA PARA EL DESARROLLO DE ESTE PROYECTO
+
+Esta es la primera versión preliminar de la documentación del uso de la IA, visible en commits iniciales pero no la versión final.
+
+Mi uso principal de la IA es ayudarme a entender los conceptos técnicos que no comprendo para saber las implicaciones de tomar una decisión u otra, por ahora tomo de ejemplo la diferencia entre tres formatos de datos que envía cada transportista a los siete ejes de divergencia o tipado de datos que maneja cada transportista
+Entra en juego la conversación de uno de los principales requerimientos del cliente, "En enero entra un cuarto transportista y no quiero volver a pagar por lo mismo", pensaría que es fácil decirle que en cuanto deba ingresar, se le ayudará sin costo adicional en su momento, pero eso comprometería al equipo futuro y nos deja a la posibilidad que en abril entre uno nuevo, lo cual ya dejaría al futuro equipo con una deuda técnica que deberán resolver manualmente. Uso la IA para debatir sobre estas decisiones
