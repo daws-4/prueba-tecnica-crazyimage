@@ -19,6 +19,26 @@ Después de ti, **el código lo mantendrá un equipo de dos personas que no part
 ## ** Cómo se manejarán los distintos formatos de datos que envía cada transportista y cómo se abordará el ingreso cuarto? **
 
 - 1 un adaptador en código por transportista
-- 2 vocabulario configurable por el operador para datos extra
+- 2 vocabulario configurable por el operador para traducir los nombres de los campos que envían los transportistas para poder manejarlo localmente, siendo que por ejemplo el código de uno de los transportistas no tiene una interpretación directa para el desarrollador pero el usuario (Camila) sí lo conoce
 - 3 el cuarto transportista cuesta una sesión de desarrollo de un programador para poder integrarlo de la forma más optima
 
+## ** Qué motor de base de datos usar, postgresql o mongodb **
+- 1 Mongo proteje la integridad de los payloads originales, información que se perdería al usar postgresql 
+- 2 el flujo de la información para el usuario y la información que se maneja en sí no requiere de consultas complejas entre las colecciones, lo que haría que postgresql no tuviera más valor que mongodb
+- 3 Mongo garantiza atomicidad a nivel de documento sin necesidad de transacción, la consistencia que importa es dentro de los documentos, no entre colecciones
+
+## ** Lo que pidió el cliente, en sus palabras**
+
+Respuesta corta de lo que se usará para cada petición del cliente
+
+## ** Núcleo obligatorio **
+
+Si algo varía o no de lo propuesto en el documento
+
+## ** Un extra, si el núcleo ya está cerrado**
+
+De las opciones propuestas, implementar Polling para que el panel del usuario (Camila) se actualice solo cuando hay nuevos eventos, que no sea necesario recargar la página manualmente.
+
+## ** Cobertura de Pruebas **
+Cobertura de pruebas. Con cuatro casos bien elegidos ya nos dices más que con cuarenta.
+un caso típico, tres casos límites, dos con tres transportistas, dos con cuatro transportistas
