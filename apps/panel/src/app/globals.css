@@ -276,3 +276,36 @@ code {
 .conexion[data-estado='reconectando'] .punto {
   background: var(--en-reparto);
 }
+
+/* --- paginación --- */
+
+.paginacion {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+}
+
+.tamanos {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tamanos a {
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--borde);
+  border-radius: 5px;
+  background: var(--panel);
+  text-decoration: none;
+  color: var(--suave);
+  font-variant-numeric: tabular-nums;
+}
+
+.tamanos a[data-activo='true'] {
+  border-color: var(--acento);
+  color: var(--acento);
+  font-weight: 600;
+}

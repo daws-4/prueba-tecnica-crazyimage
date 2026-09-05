@@ -119,7 +119,7 @@ curl -X POST http://localhost:3001/ingest/rutasur \
 | Método | Ruta | Qué hace |
 |---|---|---|
 | `POST` | `/ingest/:carrierId` | Recibe un lote de un transportista y devuelve el informe: cuántos entraron, cuántos eran reenvíos, cuántos quedaron en cuarentena y por qué |
-| `GET` | `/shipments` | Listado paginado por cursor. Filtros: `status`, `carrierId`, `stalledForHours` |
+| `GET` | `/shipments` | Listado paginado por cursor. Filtros: `status`, `carrierId`, `stalledForHours`; tamaño con `limit` |
 | `GET` | `/shipments/:trackingNumber` | Estado actual y línea de tiempo ordenada |
 | `GET` | `/stream` | Flujo de avisos en vivo (SSE). Emite cuando termina de entrar un lote, y late cada 20 s |
 
