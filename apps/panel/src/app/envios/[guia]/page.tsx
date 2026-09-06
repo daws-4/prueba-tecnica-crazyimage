@@ -4,6 +4,7 @@ import { SHIPMENT_STATUS_LABELS, type TimelineEvent } from '@andina/contracts';
 import { SearchBox } from '@/components/search-box';
 import { StatusBadge } from '@/components/status-badge';
 import { findShipment } from '@/lib/api';
+import { fechaLarga, horaConSegundos } from '@/lib/tiempo';
 
 /**
  * El detalle de un envio: estado actual y linea de tiempo completa.
@@ -21,19 +22,6 @@ import { findShipment } from '@/lib/api';
  *    duplicacion: son dos fuentes independientes coincidiendo, y eso es una
  *    confirmacion. Se agrupan visualmente, pero no se fusionan.
  */
-
-const fechaLarga = (iso: string): string =>
-  new Date(iso).toLocaleString('es-CO', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
-/** Con segundos: dos lotes del mismo dia pueden entrar con segundos de diferencia. */
-const horaCorta = (iso: string): string =>
-  new Date(iso).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 /**
  * El evento que llego el ultimo.
@@ -139,7 +127,7 @@ export default async function Page({
                 {grupo.map((evento) => (
                   <StatusBadge key={evento.id} status={evento.status} />
                 ))}
-                {decide ? <span className="meta">← decide el estado actual</span> : null}
+                {decide ? <span className="meta">← estado actual</span> : null}
               </div>
 
               {grupo.map((evento) => (
@@ -151,7 +139,7 @@ export default async function Page({
                   {/* Se dice cuando nos enteramos, no solo cuando ocurrio. Es lo
                       que explica por que el estado actual no es el ultimo aviso
                       recibido. */}
-                  nos llegó a las {horaCorta(evento.receivedAt)}
+                  nos llegó a las {horaConSegundos(evento.receivedAt)}
                   {evento.id === ultimoAviso?.id ? (
                     <strong> · último aviso recibido</strong>
                   ) : null}

@@ -18,6 +18,17 @@ const DISPLAY_NAMES = new Map(DEFAULT_VOCABULARIES.map((v) => [v.carrierId, v.di
 
 const HOUR_MS = 3_600_000;
 
+/**
+ * Escapa lo que el usuario escribe antes de meterlo en una expresion regular.
+ *
+ * No es paranoia de manual: la caja de busqueda va directa a un `$regex`, y un
+ * `.` o un `*` sin escapar dejan de ser caracteres para convertirse en
+ * comodines. En el mejor caso Camila busca "AC-4471." y le salen envios que no
+ * son; en el peor, alguien escribe un patron con retroceso catastrofico y tumba
+ * la busqueda para todos.
+ */
+const escapeRegex = (valor: string): string => valor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 @Injectable()
 export class ShipmentsService {
   constructor(private readonly mongo: MongoService) {}
@@ -113,6 +124,18 @@ export class ShipmentsService {
 
   private buildFilter(query: ListShipmentsQuery): Filter<ShipmentDocument> {
     const conditions: Filter<ShipmentDocument>[] = [];
+
+    // El prefijo va anclado con `^` y sin marca de insensibilidad a mayusculas.
+    // Las dos cosas son deliberadas: una expresion anclada y sensible a
+    // mayusculas es la unica que Mongo puede resolver saltando por el indice del
+    // `_id` en vez de leer envio por envio. Se normaliza a mayusculas al entrar
+    // porque los tres transportistas mandan la guia asi y Camila no tiene por
+    // que escribirla igual; si algun dia un transportista empieza a mandarlas en
+    // minusculas, esto deja de encontrarlas y la solucion es normalizar la guia
+    // al ingerirla, no relajar la busqueda.
+    if (query.q !== undefined) {
+      conditions.push({ _id: { $regex: `^${escapeRegex(query.q.toUpperCase())}` } });
+    }
 
     if (query.status !== undefined) {
       conditions.push({ currentStatus: query.status });

@@ -11,6 +11,7 @@ import {
 import { SearchBox } from '@/components/search-box';
 import { StatusBadge } from '@/components/status-badge';
 import { listShipments } from '@/lib/api';
+import { instanteCorto } from '@/lib/tiempo';
 
 /**
  * Pantalla principal: buscador y listado de envios.
@@ -29,14 +30,6 @@ import { listShipments } from '@/lib/api';
  */
 
 const HORAS_PARADO = 48;
-
-const instante = (iso: string): string =>
-  new Date(iso).toLocaleString('es-CO', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
 
 const esEstado = (valor: string | undefined): valor is ShipmentStatus =>
   valor !== undefined && (SHIPMENT_STATUSES as readonly string[]).includes(valor);
@@ -170,7 +163,7 @@ export default async function Page({
                   <StatusBadge status={envio.currentStatus} />
                 </td>
                 <td>
-                  {instante(envio.lastEventAt)}
+                  {instanteCorto(envio.lastEventAt)}
                   {envio.lastLocation !== null ? (
                     <span className="meta"> · {envio.lastLocation.city}</span>
                   ) : null}

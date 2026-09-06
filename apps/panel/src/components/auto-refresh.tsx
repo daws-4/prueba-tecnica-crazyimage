@@ -4,6 +4,8 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { HEARTBEAT_INTERVAL_MS, ingestionSignalSchema } from '@andina/contracts';
 
+import { horaConSegundos } from '@/lib/tiempo';
+
 /**
  * Mantiene la pantalla al dia sin recargarla.
  *
@@ -38,9 +40,6 @@ import { HEARTBEAT_INTERVAL_MS, ingestionSignalSchema } from '@andina/contracts'
 const VIGILANCIA_MS = HEARTBEAT_INTERVAL_MS * 3;
 
 type Estado = 'conectando' | 'en-vivo' | 'reconectando';
-
-const horaCorta = (instante: Date): string =>
-  instante.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
 export function AutoRefresh(): React.JSX.Element {
   const router = useRouter();
@@ -111,7 +110,7 @@ export function AutoRefresh(): React.JSX.Element {
     <span className="meta conexion" data-estado={estado}>
       <span className="punto" aria-hidden="true" />
       {etiqueta}
-      {ultimoLote !== null ? ` · último lote a las ${horaCorta(ultimoLote)}` : ''}
+      {ultimoLote !== null ? ` · último lote a las ${horaConSegundos(ultimoLote)}` : ''}
     </span>
   );
 }

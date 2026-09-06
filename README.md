@@ -256,7 +256,7 @@ que de verdad explica este proyecto. En corto:
 
 | | Decisión |
 |---|---|
-| Formatos | Un adaptador en código por transportista; el vocabulario, editable como dato |
+| Formatos | Un adaptador en código por transportista; el vocabulario, aislado como dato fuera del adaptador |
 | Persistencia | Un solo motor, MongoDB, pese a que el cliente pidió dos |
 | Idempotencia | La identidad del evento se calcula de su contenido, porque nadie manda un identificador |
 | Contrato | Un esquema del que se derivan los tipos, validado en ejecución y no solo al compilar |

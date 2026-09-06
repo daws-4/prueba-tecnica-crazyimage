@@ -60,10 +60,11 @@ const request = async <T>(path: string, schema: ZodType<T>): Promise<T> => {
 
 export const listShipments = async (
   query: Partial<
-    Pick<ListShipmentsQuery, 'status' | 'carrierId' | 'stalledForHours' | 'after' | 'before'>
+    Pick<ListShipmentsQuery, 'q' | 'status' | 'carrierId' | 'stalledForHours' | 'after' | 'before'>
   > & { limit?: number },
 ): Promise<ShipmentListResponse> => {
   const params = new URLSearchParams();
+  if (query.q !== undefined) params.set('q', query.q);
   if (query.status !== undefined) params.set('status', query.status);
   if (query.carrierId !== undefined) params.set('carrierId', query.carrierId);
   if (query.stalledForHours !== undefined) params.set('stalledForHours', String(query.stalledForHours));

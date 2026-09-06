@@ -7,6 +7,12 @@ import type { ShipmentStatus } from '@andina/contracts';
  * vocabulario es dato. Todo lo que hay aqui esta pensado para editarse desde el
  * panel, sin despliegue, porque cambia varias veces al ano y quien sabe hacerlo
  * bien es atencion al cliente, no un programador.
+ *
+ * OJO, estado actual: esa pantalla NO existe todavia. Hoy el vocabulario se lee
+ * de la semilla de mas abajo y cambiarlo exige desplegar. Lo que si esta hecho
+ * es la separacion: el vocabulario no vive dentro del adaptador, viaja como
+ * parametro al normalizador. Para pasarlo a una tabla, el unico punto que hay
+ * que tocar es `IngestionService.vocabularyFor()`.
  */
 export interface CarrierVocabulary {
   readonly carrierId: string;
@@ -46,8 +52,9 @@ const DEFAULT_FUTURE_TOLERANCE_MINUTES = 15;
 const DEFAULT_PAST_TOLERANCE_DAYS = 90;
 
 /**
- * Vocabulario inicial de los tres transportistas. Es la SEMILLA de la tabla que
- * despues se edita desde el panel, no la fuente de verdad en ejecucion.
+ * Vocabulario inicial de los tres transportistas. Esta pensado como la SEMILLA
+ * de una tabla editable, pero mientras esa tabla no exista es la fuente de
+ * verdad en ejecucion: lo que se cambie aqui solo se aplica al desplegar.
  *
  * Aviso honesto: de los tres formatos el enunciado solo documenta un valor de
  * estado de cada uno (`EN_TRANSITO`, el codigo `3`, `EnRuta`). El resto son
@@ -92,8 +99,9 @@ export const DEFAULT_VOCABULARIES: readonly CarrierVocabulary[] = [
     displayName: 'RutaSur',
     // UTC-4, el reloj de Venezuela. Es la asuncion de §3.2 y es una inferencia
     // sobre UNA sola muestra del enunciado: `10:22` cuadra con las `14:22:10Z`
-    // de Andes para el mismo envio en la misma ciudad. Por eso vive aqui, donde
-    // se cambia sin desplegar, y no incrustada en el adaptador.
+    // de Andes para el mismo envio en la misma ciudad. Por eso vive aqui, en un
+    // solo sitio y a la vista, y no incrustada en el adaptador: el dia que la
+    // muestra demuestre que es otro huso, se corrige aqui y solo aqui.
     utcOffsetMinutes: -240,
     statusMap: {
       Recogido: 'recogido',

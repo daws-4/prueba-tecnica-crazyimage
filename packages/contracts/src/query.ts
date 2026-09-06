@@ -24,12 +24,41 @@ export const isShipmentPageSize = (valor: number): valor is ShipmentPageSize =>
   (SHIPMENT_PAGE_SIZES as readonly number[]).includes(valor);
 
 /**
+ * Minimo de caracteres para que el buscador pregunte al API.
+ *
+ * Vive en el contrato porque es un acuerdo entre las dos capas: el panel no
+ * pregunta con menos y el API no promete nada util con menos. Con una sola
+ * letra, la busqueda devolveria practicamente la coleccion entera — eso no es
+ * una sugerencia, es el listado disfrazado.
+ */
+export const MIN_SEARCH_LENGTH = 2;
+
+/** Cuantas sugerencias se ofrecen mientras se escribe. Caben en pantalla sin desplazar. */
+export const SEARCH_SUGGESTION_LIMIT = 8;
+
+/**
  * Parametros del listado de envios.
  *
  * `z.coerce` porque esto llega como cadena en la URL: el borde del API es quien
  * convierte, no el controlador a mano.
  */
 export const listShipmentsQuerySchema = z.object({
+  /**
+   * Busqueda por numero de guia, la que alimenta el buscador segun se escribe.
+   *
+   * Es un **prefijo**, no una subcadena, y esa decision tiene un coste que hay
+   * que decir en voz alta: quien escriba `4471` no encuentra `AC-4471`, tiene
+   * que escribir `AC-44`. A cambio, la consulta se resuelve saltando por el
+   * indice del numero de guia en vez de leer la coleccion entera. Buscar por
+   * subcadena obliga a mirar envio por envio, y aqui eso ocurre **en cada tecla
+   * que Camila pulsa**: con veinte mil envios no se nota y con dos millones el
+   * buscador se cae solo.
+   *
+   * Es un filtro mas del listado y no un endpoint aparte: asi se combina con el
+   * estado y con los parados, y no duplica ni la paginacion ni el contrato.
+   */
+  q: z.string().trim().min(MIN_SEARCH_LENGTH).max(64).optional(),
+
   /** Filtro por estado actual. El mas obvio y el que menos ayuda por si solo. */
   status: shipmentStatusSchema.optional(),
 

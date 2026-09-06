@@ -72,7 +72,7 @@ fallo casi siempre es la solución:
 | Dos eventos idénticos de transportistas distintos parecen duplicados | Son dos fuentes independientes coincidiendo: **una confirmación**. `carrierId` está en la clave de deduplicación a propósito. Fusionarlos no tiene vuelta atrás |
 | El estado actual no coincide con el último evento recibido | Correcto. Los lotes llegan desordenados y el estado lo decide el que **ocurrió** más tarde |
 | El ejemplo de TransBolívar cae en cuarentena | Su `occurred_at` está en 2025, a 365 días del lote: fuera del umbral de cordura. Es el comportamiento buscado |
-| El huso de RutaSur (UTC−4) parece arbitrario | Es una asunción documentada, apoyada en el único ejemplo disponible. Vive en `vocabulary.ts` para poder cambiarla sin desplegar, y cada evento guarda el desfase con el que se calculó |
+| El huso de RutaSur (UTC−4) parece arbitrario | Es una asunción documentada, apoyada en el único ejemplo disponible. Vive aislada en `vocabulary.ts`, en un único sitio y fuera del adaptador, y cada evento guarda el desfase con el que se calculó |
 
 Si algo de esto parece mal, la respuesta está en `docs/DECISIONS.md` antes que en el código.
 
